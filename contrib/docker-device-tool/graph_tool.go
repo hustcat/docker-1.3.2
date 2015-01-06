@@ -1,3 +1,8 @@
+// Copyright 2015 graph_tool authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+// Author：Ye Yin<hustcat@gmail.com>
+
 package main
 
 import (
@@ -7,13 +12,17 @@ import (
 	"github.com/docker/docker/daemon/graphdriver"
 	"github.com/docker/docker/daemon/graphdriver/devmapper"
 	"github.com/docker/docker/graph"
+	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/archive"
 	"io"
 	"os"
 	"path"
 )
 
-var root string
+var (
+	root         string
+	graphOptions []string
+)
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s <flags>   [diff id parent]|[apply containerId]\n", os.Args[0])
@@ -26,7 +35,7 @@ func initGraph() (*graph.Graph, error) {
 	graphdriver.DefaultDriver = "devicemapper"
 
 	// Load storage driver
-	driver, err := graphdriver.New(root, nil)
+	driver, err := graphdriver.New(root, graphOptions)
 	if err != nil {
 		log.Errorf("Load storage driver error: %v", err)
 		return nil, err
@@ -41,11 +50,46 @@ func initGraph() (*graph.Graph, error) {
 	}
 	return g, nil
 }
+
+func checkIsParent(id, parent string, g *graph.Graph) (bool, error) {
+	isParent := false
+	img, err := g.Get(id)
+	if err != nil {
+		return false, err
+	}
+
+	for {
+		if img.Parent == nil {
+			break
+		}
+
+		if img.Parent == parent {
+			isParent = true
+			break
+		}
+
+		img, err = g.Get(img.Parent)
+		if err != nil {
+			break
+		}
+	}
+	return isParent, err
+}
+
 func exportDiff(id, parent string) error {
 	g, err := initGraph()
 	if err != nil {
 		return err
 	}
+
+	b, err := checkIsParent(id, parent)
+	if err != nil {
+		return err
+	}
+	if !b {
+		return fmt.Errorf("%s is not parent of %s", parent, id)
+	}
+
 	driver := g.Driver()
 	fs, err := driver.Diff(id, parent)
 	if err != nil {
@@ -78,6 +122,7 @@ func applyLayer(containerId string) error {
 
 func main() {
 	flag.StringVar(&root, "r", "/var/lib/docker", "Docker root dir")
+	opts.ListVar(&graphOptions, []string{"-storage-opt"}, "Set storage driver options")
 	flDebug := flag.Bool("D", false, "Debug mode")
 
 	flag.Parse()
