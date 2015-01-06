@@ -1,7 +1,7 @@
 // Copyright 2015 graph_tool authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
-// Author：Ye Yin<hustcat@gmail.com>
+// Author <Ye Yin<hustcat@gmail.com>
 
 package main
 
@@ -59,7 +59,7 @@ func checkIsParent(id, parent string, g *graph.Graph) (bool, error) {
 	}
 
 	for {
-		if img.Parent == nil {
+		if img.Parent == "" {
 			break
 		}
 
@@ -82,7 +82,7 @@ func exportDiff(id, parent string) error {
 		return err
 	}
 
-	b, err := checkIsParent(id, parent)
+	b, err := checkIsParent(id, parent, g)
 	if err != nil {
 		return err
 	}
