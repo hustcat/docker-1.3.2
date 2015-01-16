@@ -132,10 +132,9 @@ func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
 		if isOfficial && strings.IndexRune(remoteName, '/') == -1 {
 			remoteName = "library/" + remoteName
 		}
-
-		// Use provided mirrors, if any
-		mirrors = s.mirrors
 	}
+	// Use provided mirrors, if any
+	mirrors = s.mirrors
 
 	if len(mirrors) == 0 && (isOfficial || endpoint.Version == registry.APIVersion2) {
 		j := job.Eng.Job("trust_update_base")
