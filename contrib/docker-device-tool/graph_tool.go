@@ -21,7 +21,7 @@ import (
 
 var (
 	root         string
-	graphOptions []string
+	graphOptions []string = []string{"dm.basesize=20G", "dm.loopdatasize=200G"}
 )
 
 func usage() {
