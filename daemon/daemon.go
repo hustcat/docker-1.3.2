@@ -128,6 +128,7 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 		"execCreate":        daemon.ContainerExecCreate,
 		"execStart":         daemon.ContainerExecStart,
 		"execResize":        daemon.ContainerExecResize,
+		"cgroup":            daemon.ContainerCgroup,
 	} {
 		if err := eng.Register(name, method); err != nil {
 			return err
@@ -951,7 +952,7 @@ func (daemon *Daemon) shutdown() error {
 					log.Debugf("kill 15 error for %s - %s", c.ID, err)
 				}
 				if _, err := c.WaitStop(3 * time.Second); err != nil {
-					log.Infof("Container %v failed to exit within %d seconds of SIGTERM - using the force", c.ID, 5)
+					log.Infof("Container %v failed to exit within %d seconds of SIGTERM - using the force", c.ID, 3)
 					if err := c.Kill(); err != nil {
 						c.WaitStop(-1 * time.Second)
 					}

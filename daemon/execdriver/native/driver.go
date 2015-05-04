@@ -24,6 +24,7 @@ import (
 	"github.com/docker/libcontainer/namespaces"
 	_ "github.com/docker/libcontainer/namespaces/nsenter"
 	"github.com/docker/libcontainer/system"
+	"github.com/docker/docker/pkg/log"
 )
 
 const (
@@ -118,7 +119,8 @@ func (d *driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 
 		c.ProcessConfig.Env = container.Env
 		c.ProcessConfig.Dir = container.RootFs
-
+		
+		log.Debugf("init path: %s with args: %v, init: %s", c.ProcessConfig.Path, c.ProcessConfig.Args, init)
 		return &c.ProcessConfig.Cmd
 	}, func() {
 		if startCallback != nil {
@@ -308,4 +310,8 @@ func (t *TtyConsole) AttachPipes(command *exec.Cmd, pipes *execdriver.Pipes) err
 
 func (t *TtyConsole) Close() error {
 	return t.MasterPty.Close()
+}
+
+func (d *driver) Parent() string {
+	return "docker"
 }

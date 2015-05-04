@@ -57,6 +57,7 @@ func init() {
 		for _, command := range [][]string{
 			{"attach", "Attach to a running container"},
 			{"build", "Build an image from a Dockerfile"},
+			{"cgroup", "Set or get cgroup subsystems on a container"},
 			{"commit", "Create a new image from a container's changes"},
 			{"cp", "Copy files/folders from a container's filesystem to the host path"},
 			{"create", "Create a new container"},
