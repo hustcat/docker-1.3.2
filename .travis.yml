@@ -31,7 +31,7 @@ before_script:
   - env | sort
 
 script:
-  - hack/make.sh validate-dco
+#  - hack/make.sh validate-dco
   - hack/make.sh validate-gofmt
   - DOCKER_CLIENTONLY=1 ./hack/make.sh dynbinary
   - ./hack/make.sh dynbinary dyntest-unit

@@ -120,42 +120,42 @@ func applyLayer(containerId string) error {
 	return err
 }
 
-func diffAndApply(id, parent, container string) error{
-    g, err := initGraph()
-    if err != nil {
-        return err
-    }
+func diffAndApply(id, parent, container string) error {
+	g, err := initGraph()
+	if err != nil {
+		return err
+	}
 
-    b, err := checkIsParent(id, parent, g)
-    if err != nil {
-        return err
-    }
-    if !b {
-        return fmt.Errorf("%s is not parent of %s", parent, id)
-    }
+	b, err := checkIsParent(id, parent, g)
+	if err != nil {
+		return err
+	}
+	if !b {
+		return fmt.Errorf("%s is not parent of %s", parent, id)
+	}
 
-    dest := path.Join(root, "devicemapper", "mnt", container, "rootfs")
-    fi, err := os.Stat(dest)
-    if err != nil && !os.IsExist(err) {
-        return err
-    }
+	dest := path.Join(root, "devicemapper", "mnt", container, "rootfs")
+	fi, err := os.Stat(dest)
+	if err != nil && !os.IsExist(err) {
+		return err
+	}
 
-    if !fi.IsDir() {
-        return fmt.Errorf(" Dest %s is not dir", dest)
-    }
+	if !fi.IsDir() {
+		return fmt.Errorf(" Dest %s is not dir", dest)
+	}
 
-    driver := g.Driver()
-    fs, err := driver.Diff(id, parent)
-    if err != nil {
-        return err
-    }
-    defer fs.Close()
+	driver := g.Driver()
+	fs, err := driver.Diff(id, parent)
+	if err != nil {
+		return err
+	}
+	defer fs.Close()
 
 	err = archive.ApplyLayer(dest, fs)
-    if err != nil {
-        return err
-    }
-    return nil
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func main() {
@@ -187,18 +187,18 @@ func main() {
 			os.Exit(1)
 		}
 		break
-    case "diffapply":
-        if flag.NArg() < 4 {
-            usage()
-        }
-        err := diffAndApply(args[1], args[2], args[3])
-        if err != nil {
-            log.Errorf("Apply diff  error: %v", err)
-            os.Exit(1)
-        }else{
+	case "diffapply":
+		if flag.NArg() < 4 {
+			usage()
+		}
+		err := diffAndApply(args[1], args[2], args[3])
+		if err != nil {
+			log.Errorf("Apply diff  error: %v", err)
+			os.Exit(1)
+		} else {
 			log.Infof("Apply diff success")
 		}
-        break
+		break
 	case "apply":
 		if flag.NArg() < 2 {
 			usage()

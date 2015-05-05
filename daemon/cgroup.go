@@ -6,6 +6,7 @@ import (
 	"github.com/docker/docker/pkg/log"
 	"github.com/docker/docker/pkg/units"
 	"github.com/docker/libcontainer/cgroups/fs"
+	"strconv"
 )
 
 func updateConfig(c *Container, subsystem string, value string) error {
@@ -14,10 +15,24 @@ func updateConfig(c *Container, subsystem string, value string) error {
 	} else if subsystem == "memory.limit_in_bytes" {
 		parsedMemory, err := units.RAMInBytes(value)
 		if err != nil {
-			log.Errorf("Update config for container %s error %v", c.ID, err)
+			log.Errorf("Update memory.limit_in_bytes for container %s error %v", c.ID, err)
 			return err
 		}
 		c.Config.Memory = parsedMemory
+	} else if subsystem == "cpu.shares" {
+		parsedCpu, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			log.Errorf("Update cpu.shares for container %s error %v", c.ID, err)
+			return err
+		}
+		c.Config.CpuShares = parsedCpu
+	} else if subsystem == "memory.memsw.limit_in_bytes" {
+		parsedMemsw, err := units.RAMInBytes(value)
+		if err != nil {
+			log.Errorf("Update memory.memsw.limit_in_bytes for container %s error %v", c.ID, err)
+			return err
+		}
+		c.Config.MemorySwap = parsedMemsw
 	} else {
 		log.Infof("Ignore config update container %s, subsystem %s ", c.ID, subsystem)
 	}
@@ -86,9 +101,13 @@ func (daemon *Daemon) ContainerCgroup(job *engine.Job) engine.Status {
 				cgroupResponse.Err = err.Error()
 				cgroupResponse.Status = 255
 			} else {
-				cgroupResponse.Out = pair.Value
-				cgroupResponse.Status = 0
-				updateConfig(container, pair.Key, pair.Value)
+				if err = updateConfig(container, pair.Key, pair.Value); err != nil {
+					cgroupResponse.Out = err.Error()
+					cgroupResponse.Status = 1
+				} else {
+					cgroupResponse.Out = pair.Value
+					cgroupResponse.Status = 0
+				}
 			}
 			object = append(object, cgroupResponse)
 		}

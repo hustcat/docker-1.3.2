@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/docker/docker/daemon/execdriver"
+	"github.com/docker/docker/pkg/log"
 	"github.com/docker/docker/pkg/term"
 	"github.com/docker/libcontainer"
 	"github.com/docker/libcontainer/apparmor"
@@ -24,7 +25,6 @@ import (
 	"github.com/docker/libcontainer/namespaces"
 	_ "github.com/docker/libcontainer/namespaces/nsenter"
 	"github.com/docker/libcontainer/system"
-	"github.com/docker/docker/pkg/log"
 )
 
 const (
@@ -119,7 +119,7 @@ func (d *driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 
 		c.ProcessConfig.Env = container.Env
 		c.ProcessConfig.Dir = container.RootFs
-		
+
 		log.Debugf("init path: %s with args: %v, init: %s", c.ProcessConfig.Path, c.ProcessConfig.Args, init)
 		return &c.ProcessConfig.Cmd
 	}, func() {
