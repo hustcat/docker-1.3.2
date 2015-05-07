@@ -16,7 +16,7 @@ import (
 	"github.com/docker/libcontainer/netlink"
 	"github.com/docker/libcontainer/network"
 	"github.com/docker/libcontainer/security/capabilities"
-	"github.com/docker/libcontainer/security/restrict"
+//	"github.com/docker/libcontainer/security/restrict"
 	"github.com/docker/libcontainer/syncpipe"
 	"github.com/docker/libcontainer/system"
 	"github.com/docker/libcontainer/user"
@@ -96,13 +96,14 @@ func Init(container *libcontainer.Config, uncleanRootfs, consolePath string, syn
 		return fmt.Errorf("set process label %s", err)
 	}
 
+/* add by dbyin 2014-12-17
 	// TODO: (crosbymichael) make this configurable at the Config level
 	if container.RestrictSys {
 		if err := restrict.Restrict("proc/sys", "proc/sysrq-trigger", "proc/irq", "proc/bus"); err != nil {
 			return err
 		}
 	}
-
+*/
 	pdeathSignal, err := system.GetParentDeathSignal()
 	if err != nil {
 		return fmt.Errorf("get parent death signal %s", err)

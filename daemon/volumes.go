@@ -222,17 +222,20 @@ func validMountMode(mode string) bool {
 }
 
 func (container *Container) setupMounts() error {
-	mounts := []execdriver.Mount{
-		{Source: container.ResolvConfPath, Destination: "/etc/resolv.conf", Writable: true, Private: true},
-	}
+	/*
+		mounts := []execdriver.Mount{
+			{Source: container.ResolvConfPath, Destination: "/etc/resolv.conf", Writable: true, Private: true},
+		}
 
-	if container.HostnamePath != "" {
-		mounts = append(mounts, execdriver.Mount{Source: container.HostnamePath, Destination: "/etc/hostname", Writable: true, Private: true})
-	}
+		if container.HostnamePath != "" {
+			mounts = append(mounts, execdriver.Mount{Source: container.HostnamePath, Destination: "/etc/hostname", Writable: true, Private: true})
+		}
 
-	if container.HostsPath != "" {
-		mounts = append(mounts, execdriver.Mount{Source: container.HostsPath, Destination: "/etc/hosts", Writable: true, Private: true})
-	}
+		if container.HostsPath != "" {
+			mounts = append(mounts, execdriver.Mount{Source: container.HostsPath, Destination: "/etc/hosts", Writable: true, Private: true})
+		}
+	*/
+	var mounts []execdriver.Mount
 
 	// Mount user specified volumes
 	// Note, these are not private because you may want propagation of (un)mounts from host

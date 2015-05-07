@@ -525,3 +525,7 @@ func (t *TtyConsole) Close() error {
 func (d *driver) Exec(c *execdriver.Command, processConfig *execdriver.ProcessConfig, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (int, error) {
 	return -1, ErrExec
 }
+
+func (d *driver) Parent() string {
+	return DriverName
+}
