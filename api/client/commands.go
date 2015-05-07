@@ -2549,7 +2549,7 @@ func (cli *DockerCli) CmdExec(args ...string) error {
 
 func (cli *DockerCli) CmdCgroup(args ...string) error {
 	cmd := cli.Subcmd("cgroup", "[OPTIONS] CONTAINER SUBSYSTEM=[VALUE]...", "Set or get cgroup subsystems on a container")
-	flSaveToFile := cmd.Bool([]string{"#w", "-w"}, false, "Save change to config file")
+	flSaveToFile := cmd.Bool([]string{"#w", "-w"}, true, "Save change to config file")
 
 	if err := cmd.Parse(args); err != nil {
 		return nil
