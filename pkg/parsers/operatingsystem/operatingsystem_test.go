@@ -40,7 +40,7 @@ BUG_REPORT_URL="http://bugs.launchpad.net/ubuntu/"`)
 	dir := os.TempDir()
 	defer func() {
 		etcOsRelease = backup
-		os.RemoveAll(dir)
+		//os.RemoveAll(dir)
 	}()
 
 	etcOsRelease = filepath.Join(dir, "etcOsRelease")
@@ -94,7 +94,7 @@ func TestIsContainerized(t *testing.T) {
 	dir := os.TempDir()
 	defer func() {
 		proc1Cgroup = backup
-		os.RemoveAll(dir)
+		//os.RemoveAll(dir)
 	}()
 
 	proc1Cgroup = filepath.Join(dir, "proc1Cgroup")

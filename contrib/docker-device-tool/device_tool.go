@@ -69,7 +69,7 @@ func main() {
 	args := flag.Args()
 
 	home := path.Join(*root, "devicemapper")
-	devices, err := devmapper.NewDeviceSet(home, false)
+	devices, err := devmapper.NewDeviceSet(home, false, nil)
 	if err != nil {
 		fmt.Println("Can't initialize device mapper: ", err)
 		os.Exit(1)
@@ -142,7 +142,7 @@ func main() {
 			usage()
 		}
 
-		err := devices.RemoveDevice(args[1])
+		err := devmapper.RemoveDevice(args[1])
 		if err != nil {
 			fmt.Println("Can't remove device: ", err)
 			os.Exit(1)
@@ -153,7 +153,7 @@ func main() {
 			usage()
 		}
 
-		err := devices.MountDevice(args[1], args[2], false)
+		err := devices.MountDevice(args[1], args[2], "")
 		if err != nil {
 			fmt.Println("Can't create snap device: ", err)
 			os.Exit(1)

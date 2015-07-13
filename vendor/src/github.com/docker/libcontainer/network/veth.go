@@ -15,7 +15,7 @@ import (
 type Veth struct {
 }
 
-const defaultDevice = "eth0"
+const defaultDevice = "eth1"
 
 func (v *Veth) Create(n *Network, nspid int, networkState *NetworkState) error {
 	var (

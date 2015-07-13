@@ -2,11 +2,21 @@ package docker
 
 import (
 	"bytes"
+	"github.com/docker/docker/engine"
+	flag "github.com/docker/docker/pkg/mflag"
+	"github.com/docker/docker/pkg/sysinfo"
+	"github.com/docker/docker/runconfig"
+	"io/ioutil"
 	"testing"
 	"time"
-
-	"github.com/docker/docker/engine"
 )
+
+func parseRun2(args []string, sysInfo *sysinfo.SysInfo) (*runconfig.Config, *runconfig.HostConfig, *flag.FlagSet, error) {
+	cmd := flag.NewFlagSet("run", flag.ContinueOnError)
+	cmd.SetOutput(ioutil.Discard)
+	cmd.Usage = nil
+	return runconfig.Parse(cmd, args, sysInfo)
+}
 
 func TestCreateNumberHostname(t *testing.T) {
 	eng := NewTestEngine(t)
@@ -291,5 +301,134 @@ func TestImagesFilter(t *testing.T) {
 
 	if len(images.Data[0].GetList("RepoTags")) != 1 {
 		t.Fatal("incorrect number of matches returned")
+	}
+}
+
+func TestReadCgroup(t *testing.T) {
+	eng := NewTestEngine(t)
+	defer mkDaemonFromEngine(eng, t).Nuke()
+
+	//config, hostConfig, _, err := runconfig.Parse([]string{"-i", "-m", "100m", "-c", "1000", unitTestImageID, "/bin/cat"}, nil)
+	config, hostConfig, _, err := parseRun2([]string{"-i", "-m", "100m", "-c", "1000", unitTestImageID, "/bin/cat"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id := createTestContainer(eng, config, t)
+
+	job := eng.Job("start", id)
+	if err := job.ImportEnv(hostConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := job.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := map[string]string{
+		"memory.limit_in_bytes": "104857600",
+		"cpu.shares":            "1000",
+	}
+
+	var (
+		readSubsystem []string
+	)
+	readSubsystem = []string{"memory.limit_in_bytes", "cpu.shares"}
+
+	job = eng.Job("cgroup", id)
+	job.SetenvList("readSubsystem", readSubsystem)
+	cgroupResponses, err := job.Stdout.AddListTable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := job.Run(); err != nil {
+		t.Fatal("Unexpected error: %s", err)
+	}
+
+	if len(cgroupResponses.Data) != 2 {
+		t.Fatalf("Except length is 2, actual is %d", len(cgroupResponses.Data))
+	}
+
+	for _, cgroupResponse := range cgroupResponses.Data {
+		if cgroupResponse.GetInt("Status") != 0 {
+			t.Fatalf("Unexcepted status %d for subsystem %s, cause by %s", cgroupResponse.GetInt("Status"), cgroupResponse.Get("Subsystem"), cgroupResponse.Get("Err"))
+		}
+		value, exist := raw[cgroupResponse.Get("Subsystem")]
+		if exist {
+			if value != cgroupResponse.Get("Out") {
+				t.Fatalf("Unexcepted output %s for subsystem %s", cgroupResponse.Get("Out"), cgroupResponse.Get("Subsystem"))
+			}
+		} else {
+			t.Fatalf("Unexcepted subsystem %s", cgroupResponse.Get("Subsystem"))
+		}
+	}
+}
+
+func TestWriteCgroup(t *testing.T) {
+	eng := NewTestEngine(t)
+	defer mkDaemonFromEngine(eng, t).Nuke()
+
+	//config, hostConfig, _, err := runconfig.Parse([]string{"-i", "-m", "100m", "-c", "1000", unitTestImageID, "/bin/cat"}, nil)
+	config, hostConfig, _, err := parseRun2([]string{"-i", "-m", "100m", "-c", "1000", unitTestImageID, "/bin/cat"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id := createTestContainer(eng, config, t)
+
+	job := eng.Job("start", id)
+	if err := job.ImportEnv(hostConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := job.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := map[string]string{
+		"memory.limit_in_bytes": "104857600",
+		"cpu.shares":            "500",
+	}
+
+	var (
+		writeSubsystem []struct {
+			Key   string
+			Value string
+		}
+	)
+	for key, value := range raw {
+		writeSubsystem = append(writeSubsystem, struct {
+			Key   string
+			Value string
+		}{Key: key, Value: value})
+	}
+
+	job = eng.Job("cgroup", id)
+	job.SetenvJson("writeSubsystem", writeSubsystem)
+	job.SetenvBool("saveToFile", true)
+	cgroupResponses, err := job.Stdout.AddListTable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := job.Run(); err != nil {
+		t.Fatal("Unexpected error: %s", err)
+	}
+
+	if len(cgroupResponses.Data) != 2 {
+		t.Fatalf("Except length is 2, actual is %d", len(cgroupResponses.Data))
+	}
+
+	for _, cgroupResponse := range cgroupResponses.Data {
+		if cgroupResponse.GetInt("Status") != 0 {
+			t.Fatalf("Unexcepted status %d for subsystem %s, cause by %s", cgroupResponse.GetInt("Status"), cgroupResponse.Get("Subsystem"), cgroupResponse.Get("Err"))
+		}
+		value, exist := raw[cgroupResponse.Get("Subsystem")]
+		if exist {
+			if cgroupResponse.Get("Out") != value || cgroupResponse.Get("Err") != "" {
+				t.Fatalf("Unexcepted stdout %s, stderr %s for subsystem %s", cgroupResponse.Get("Out"), cgroupResponse.Get("Err"), cgroupResponse.Get("Subsystem"))
+			}
+		} else {
+			t.Fatalf("Unexcepted subsystem %s", cgroupResponse.Get("Subsystem"))
+		}
 	}
 }
