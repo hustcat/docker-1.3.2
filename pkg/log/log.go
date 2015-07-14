@@ -6,7 +6,16 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	log "github.com/Sirupsen/logrus"
 )
+
+func init() {
+	log.SetOutput(os.Stderr)
+	log.SetLevel(log.InfoLevel)
+	if os.Getenv("DEBUG") != "" {
+		log.SetLevel(log.DebugLevel)
+	}
+}
 
 type priority int
 

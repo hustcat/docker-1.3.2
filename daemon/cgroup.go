@@ -2,8 +2,8 @@ package daemon
 
 import (
 	"encoding/json"
+	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/engine"
-	"github.com/docker/docker/pkg/log"
 	"github.com/docker/docker/pkg/units"
 	"github.com/docker/libcontainer/cgroups/fs"
 	"strconv"

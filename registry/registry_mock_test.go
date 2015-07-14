@@ -17,7 +17,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/docker/docker/pkg/log"
+	log "github.com/Sirupsen/logrus"
 )
 
 var (
