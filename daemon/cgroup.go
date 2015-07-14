@@ -52,11 +52,12 @@ func (daemon *Daemon) ContainerCgroup(job *engine.Job) engine.Status {
 			Key   string
 			Value string
 		}
+		err error
 	)
 
 	job.GetenvJson("writeSubsystem", &writeSubsystem)
 
-	log.Debugf("name %s, readSubsystem %s, writeSubsystem %s", name, readSubsystem, writeSubsystem)
+	log.Infof("name %s, readSubsystem %s, writeSubsystem %s", name, readSubsystem, writeSubsystem)
 
 	if container := daemon.Get(name); container != nil {
 		if !container.State.IsRunning() {
@@ -96,23 +97,33 @@ func (daemon *Daemon) ContainerCgroup(job *engine.Job) engine.Status {
 			}
 
 			cgroupResponse.Subsystem = pair.Key
-			err := fs.Set(container.ID, daemon.ExecutionDriver().Parent(), pair.Key, pair.Value)
+			oldValue, _ := fs.Get(container.ID, daemon.ExecutionDriver().Parent(), pair.Key)
+
+			err = fs.Set(container.ID, daemon.ExecutionDriver().Parent(), pair.Key, pair.Value)
 			if err != nil {
 				cgroupResponse.Err = err.Error()
 				cgroupResponse.Status = 255
 			} else {
+				newValue, _ := fs.Get(container.ID, daemon.ExecutionDriver().Parent(), pair.Key)
+				log.Infof("cgroup: %s old value: %s, new value: %s", pair.Key, oldValue, newValue)
+
+				/* memory.limit_in_bytes 5g != 5368709120
+				if newValue != pair.Value {
+					return job.Errorf("cgroup %s change value failed, newValue %s is not same as expect value %s", pair.Key, newValue, pair.Value)
+				}*/
+
 				if err = updateConfig(container, pair.Key, pair.Value); err != nil {
 					cgroupResponse.Out = err.Error()
 					cgroupResponse.Status = 1
 				} else {
-					cgroupResponse.Out = pair.Value
+					cgroupResponse.Out = newValue
 					cgroupResponse.Status = 0
 				}
 			}
 			object = append(object, cgroupResponse)
 		}
 
-		if saveToFile {
+		if saveToFile && err == nil {
 			if err := container.ToDisk(); err != nil {
 				return job.Error(err)
 			}
