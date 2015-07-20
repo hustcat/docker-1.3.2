@@ -21,6 +21,11 @@ type Driver struct {
 }
 
 func Init(home string, options []string) (graphdriver.Driver, error) {
+	if err := os.MkdirAll(home, 0700); err != nil && !os.IsExist(err) {
+		log.Errorf("Rbd create home dir %s failed: %v", err)
+		return nil, err
+	}
+
 	rbdSet, err := NewRbdSet(home, true, options)
 	if err != nil {
 		return nil, err

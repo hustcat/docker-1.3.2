@@ -32,7 +32,7 @@ type RbdMappingInfo struct {
 
 type DevInfo struct {
 	Hash        string `json:"hash"`
-	Device      string `json:"_"`
+	Device      string `json:"-"`
 	Size        uint64 `json:"size"`
 	BaseHash    string `json:"base_hash"` //for delete snapshot
 	Initialized bool   `json:"initialized"`
@@ -68,15 +68,15 @@ type RbdSet struct {
 }
 
 func (devices *RbdSet) getRbdImageName(hash string) string {
-	return devices.imagePrefix + hash
+	return devices.imagePrefix + "_" + hash
 }
 
 func (devices *RbdSet) getRbdSnapName(hash string) string {
-	return devices.snapPrefix + hash
+	return devices.snapPrefix + "_" + hash
 }
 
 func (devices *RbdSet) getRbdMetaOid(hash string) string {
-	return devices.metaPrefix + hash
+	return devices.metaPrefix + "_" + hash
 }
 
 func (devices *RbdSet) initRbdSet(doInit bool) error {
@@ -210,11 +210,14 @@ func (devices *RbdSet) lookupDevice(hash string) (*DevInfo, error) {
 
 	if info == nil {
 		info, err := devices.loadMetadata(hash)
-		if info == nil {
+		/*if info == nil && err != nil {
 			return nil, fmt.Errorf("Unknown device %s, error %v", hash, err)
-		}
+		}*/
 
-		devices.Devices[hash] = info
+		if info != nil {
+			devices.Devices[hash] = info
+		}
+		return info, err
 		/*
 			imgName := devices.getRbdImageName(hash)
 			img := rbd.GetImage(devices.ioctx, imgName)
@@ -302,6 +305,7 @@ func (devices *RbdSet) loadMetadata(hash string) (*DevInfo, error) {
 			log.Errorf("Rdb read metadata %s failed: %v", metaOid, err)
 			return nil, err
 		}
+		log.Infof("Rbd read metadata %s not found", metaOid)
 		// not found
 		return nil, nil
 	}
@@ -642,12 +646,13 @@ func (devices *RbdSet) Shutdown() error {
 func NewRbdSet(root string, doInit bool, options []string) (*RbdSet, error) {
 	conn, _ := rados.NewConn()
 	devices := &RbdSet{
+		MetaData:      MetaData{Devices: make(map[string]*DevInfo)},
 		conn:          conn,
 		dataPoolName:  "rbd",
-		imagePrefix:   "docker-image",
-		snapPrefix:    "docker-snap",
-		metaPrefix:    "docker-meta",
-		baseImageName: "base-image",
+		imagePrefix:   "docker_image",
+		snapPrefix:    "docker_snap",
+		metaPrefix:    "docker_meta",
+		baseImageName: "base_image",
 		baseImageSize: DefaultDockerBaseImageSize,
 		clientId:      "admin",
 		configFile:    DefaultRadosConfigFile,
