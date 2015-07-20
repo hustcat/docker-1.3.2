@@ -3,18 +3,12 @@
 package rbd
 
 import (
-	"fmt"
 	"github.com/docker/docker/daemon/graphdriver"
 	"github.com/docker/docker/pkg/log"
 	"github.com/docker/docker/pkg/mount"
-	"github.com/docker/docker/pkg/parsers"
-	"github.com/docker/libcontainer/label"
 	"io/ioutil"
 	"os"
 	"path"
-	"strings"
-	"sync"
-	"syscall"
 )
 
 func init() {
@@ -66,7 +60,7 @@ func (d *Driver) Cleanup() error {
 }
 
 func (d *Driver) Create(id, parent string) error {
-	if err := d.devices.AddDevice(id, parent); err != nil {
+	if err := d.RbdSet.AddDevice(id, parent); err != nil {
 		return err
 	}
 	return nil

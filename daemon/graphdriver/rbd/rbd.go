@@ -3,10 +3,18 @@
 package rbd
 
 import (
+	"encoding/json"
+	"fmt"
 	"github.com/docker/docker/pkg/log"
+	"github.com/docker/docker/pkg/parsers"
+	"github.com/docker/docker/pkg/units"
+	"github.com/docker/libcontainer/label"
 	"github.com/noahdesu/go-ceph/rados"
 	"github.com/noahdesu/go-ceph/rbd"
+	"os/exec"
+	"strings"
 	"sync"
+	"syscall"
 )
 
 const (
@@ -127,7 +135,7 @@ func (devices *RbdSet) setupBaseImage() error {
 	log.Debugf("Create base rbd image %s", baseName)
 
 	// create initial image
-	img, err := rbd.Create(devices.ioctx, baseName, devices.baseImageSize, rbd.RbdFeatureLayering)
+	_, err = rbd.Create(devices.ioctx, baseName, devices.baseImageSize, rbd.RbdFeatureLayering)
 	if err != nil {
 		log.Errorf("Rbd create image %s failed: %v", baseName, err)
 		return err
@@ -137,7 +145,7 @@ func (devices *RbdSet) setupBaseImage() error {
 	devInfo, err := devices.registerDevice(devices.baseImageName, "", devices.baseImageSize)
 
 	// map it
-	rbdDevice, err := devices.mapImageToRbdDevice(devInfo)
+	err = devices.mapImageToRbdDevice(devInfo)
 	if err != nil {
 		log.Errorf("Rbd map image %s failed: %v", baseName, err)
 		return err
@@ -146,9 +154,8 @@ func (devices *RbdSet) setupBaseImage() error {
 	// unmap it at last
 	defer devices.unmapImageFromRbdDevice(devInfo)
 
-	log.Debugf("Rbd map image %s to %s", baseName, rbdDevice)
+	log.Debugf("Rbd map image %s to %s", baseName, devInfo.Device)
 
-	devInfo.Device = rbdDevice
 	// create filesystem
 	if err = devices.createFilesystem(devInfo); err != nil {
 		log.Errorf("Rbd create filesystem for image %s failed: %v", baseName, err)
@@ -156,8 +163,8 @@ func (devices *RbdSet) setupBaseImage() error {
 	}
 
 	devInfo.Initialized = true
-	if err = devices.saveMetadata(info); err != nil {
-		info.Initialized = false
+	if err = devices.saveMetadata(devInfo); err != nil {
+		devInfo.Initialized = false
 		return err
 	}
 	return nil
@@ -202,9 +209,9 @@ func (devices *RbdSet) lookupDevice(hash string) (*DevInfo, error) {
 	info := devices.Devices[hash]
 
 	if info == nil {
-		info = devices.loadMetadata(hash)
+		info, err := devices.loadMetadata(hash)
 		if info == nil {
-			return nil, fmt.Errorf("Unknown device %s", hash)
+			return nil, fmt.Errorf("Unknown device %s, error %v", hash, err)
 		}
 
 		devices.Devices[hash] = info
@@ -284,12 +291,12 @@ func (devices *RbdSet) removeMetadata(info *DevInfo) error {
 	return nil
 }
 
-func (devices *RbdSet) loadMetadata(hash string) (*DevInfo, err) {
+func (devices *RbdSet) loadMetadata(hash string) (*DevInfo, error) {
 	info := &DevInfo{Hash: hash}
 	metaOid := devices.getRbdMetaOid(hash)
 
 	data := make([]byte, DefaultMetaObjectDataSize)
-	dataLen, err = devices.ioctx.Read(metaOid, data, 0)
+	dataLen, err := devices.ioctx.Read(metaOid, data, 0)
 	if err != nil {
 		if err != rados.RadosErrorNotFound {
 			log.Errorf("Rdb read metadata %s failed: %v", metaOid, err)
@@ -335,7 +342,7 @@ func (devices *RbdSet) createImage(hash, baseHash string) error {
 	snapName := devices.getRbdSnapName(hash)
 
 	if err := img.Open(snapName); err != nil {
-		if err != ImageNotFound {
+		if err != rbd.RbdErrorNotFound {
 			log.Errorf("Rbd open image %s with snap %s failed: %v", baseImgName, snapName, err)
 			return err
 		}
@@ -361,13 +368,13 @@ func (devices *RbdSet) createImage(hash, baseHash string) error {
 	defer img.Close()
 
 	// protect snapshot
-	if err = snapshot.Protect(); err != nil {
+	if err := snapshot.Protect(); err != nil {
 		log.Errorf("Rbd protect snapshot %s failed: %v", snapName, err)
 		return err
 	}
 
 	// clone image
-	_, err = img.Clone(snapName, devices.ioctx, imgName, rbd.RbdFeatureLayering)
+	_, err := img.Clone(snapName, devices.ioctx, imgName, rbd.RbdFeatureLayering)
 	if err != nil {
 		log.Errorf("Rbd clone snapshot %s@%s to %s failed: %v", baseImgName, snapName, imgName, err)
 		return err
@@ -388,9 +395,9 @@ func (devices *RbdSet) deleteImage(info *DevInfo) error {
 	}
 
 	// hash's parent
-	snapName := devices.getRbdSnapName(hash)
+	snapName := devices.getRbdSnapName(info.Hash)
 	baseImgName := devices.getRbdImageName(info.BaseHash)
-	parentImg = rbd.GetImage(devices.ioctx, baseImgName)
+	parentImg := rbd.GetImage(devices.ioctx, baseImgName)
 	if err := parentImg.Open(snapName); err != nil {
 		log.Errorf("Rbd open image %s with snap %s failed: %v", baseImgName, snapName, err)
 		return err
@@ -424,14 +431,14 @@ func (devices *RbdSet) mapImageToRbdDevice(devInfo *DevInfo) error {
 
 	out, err := exec.Command("rbd", "--pool", pool, "map", imgName).Output()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Older rbd binaries are not printing the device on mapping so
 	// we have to discover it with showmapped.
 	out, err = exec.Command("rbd", "showmapped", "--format", "json").Output()
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	mappingInfos := map[string]*RbdMappingInfo{}
@@ -444,11 +451,11 @@ func (devices *RbdSet) mapImageToRbdDevice(devInfo *DevInfo) error {
 		}
 	}
 
-	return fmt.Errorf("Unable map image %s", id)
+	return fmt.Errorf("Unable map image %s", imgName)
 }
 
 func (devices *RbdSet) unmapImageFromRbdDevice(devInfo *DevInfo) error {
-	if err := exec.Command("rbd", "unmap", rbdDevice).Run(); err != nil {
+	if err := exec.Command("rbd", "unmap", devInfo.Device).Run(); err != nil {
 		return err
 	}
 
@@ -469,7 +476,7 @@ func (devices *RbdSet) AddDevice(hash, baseHash string) error {
 		return fmt.Errorf("Rbd device %s already exists", hash)
 	}
 
-	if err := createImage(devices.ioctx, hash, baseHash); err != nil {
+	if err := devices.createImage(hash, baseHash); err != nil {
 		log.Errorf("Rdb error creating image %s (parent %s): %s", hash, baseHash, err)
 	}
 
@@ -504,8 +511,8 @@ func (devices *RbdSet) MountDevice(hash, mountPoint, mountLabel string) error {
 	defer info.lock.Unlock()
 
 	if info.mountCount > 0 {
-		if path != info.mountPath {
-			return fmt.Errorf("Trying to mount devmapper device in multple places (%s, %s)", info.mountPath, path)
+		if mountPoint != info.mountPath {
+			return fmt.Errorf("Trying to mount rbd device in multple places (%s, %s)", info.mountPath, info.Device)
 		}
 
 		info.mountCount++
@@ -533,16 +540,16 @@ func (devices *RbdSet) MountDevice(hash, mountPoint, mountLabel string) error {
 	options = joinMountOptions(options, devices.mountOptions)
 	options = joinMountOptions(options, label.FormatMountLabel("", mountLabel))
 
-	err = syscall.Mount(info.Device, path, fstype, flags, joinMountOptions("discard", options))
+	err = syscall.Mount(info.Device, mountPoint, fstype, flags, joinMountOptions("discard", options))
 	if err != nil && err == syscall.EINVAL {
-		err = syscall.Mount(info.DevName(), path, fstype, flags, options)
+		err = syscall.Mount(info.Device, mountPoint, fstype, flags, options)
 	}
 	if err != nil {
-		return fmt.Errorf("Error mounting '%s' on '%s': %s", info.DevName(), path, err)
+		return fmt.Errorf("Error mounting '%s' on '%s': %s", info.Device, mountPoint, err)
 	}
 
 	info.mountCount = 1
-	info.mountPath = path
+	info.mountPath = mountPoint
 
 	return nil
 }
@@ -573,7 +580,7 @@ func (devices *RbdSet) UnmountDevice(hash string) error {
 
 	info.mountPath = ""
 
-	if err := unmapImageFromRbdDevice(info); err != nil {
+	if err := devices.unmapImageFromRbdDevice(info); err != nil {
 		return err
 	}
 
@@ -625,7 +632,7 @@ func (devices *RbdSet) Shutdown() error {
 	}
 
 	//disconnect from rados
-	log.Debuf("Disconnect from rados")
+	log.Debugf("Disconnect from rados")
 	devices.ioctx.Destroy()
 	devices.conn.Shutdown()
 
@@ -633,9 +640,9 @@ func (devices *RbdSet) Shutdown() error {
 }
 
 func NewRbdSet(root string, doInit bool, options []string) (*RbdSet, error) {
+	conn, _ := rados.NewConn()
 	devices := &RbdSet{
-		conn:          rados.NewConn(),
-		devices:       make(map[string]*string),
+		conn:          conn,
 		dataPoolName:  "rbd",
 		imagePrefix:   "docker-image",
 		snapPrefix:    "docker-snap",
