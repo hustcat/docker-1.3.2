@@ -522,6 +522,7 @@ func (devices *RbdSet) AddDevice(hash, baseHash string) error {
 		return fmt.Errorf("Rbd device %s already exists", hash)
 	}
 
+	log.Debugf("[rbdset] Create image hash %s baseHash %s", hash, baseHash)
 	if err := devices.createImage(hash, baseHash); err != nil {
 		log.Errorf("Rdb error creating image %s (parent %s): %s", hash, baseHash, err)
 	}
@@ -544,6 +545,7 @@ func (devices *RbdSet) DeleteDevice(hash string) error {
 	info.lock.Lock()
 	defer info.lock.Unlock()
 
+	log.Debugf("[rbdset] Delete image %s", info.Hash)
 	return devices.deleteImage(info)
 }
 
@@ -565,6 +567,7 @@ func (devices *RbdSet) MountDevice(hash, mountPoint, mountLabel string) error {
 		return nil
 	}
 
+	log.Debugf("[rbdset] Mount image %s with device %s to %s", info.Hash, info.Device, info.mountPath)
 	if err := devices.mapImageToRbdDevice(info); err != nil {
 		return err
 	}
@@ -618,11 +621,11 @@ func (devices *RbdSet) UnmountDevice(hash string) error {
 		return nil
 	}
 
-	log.Debugf("[devmapper] Unmount(%s)", info.mountPath)
+	log.Debugf("[rbdset] Unmount(%s)", info.mountPath)
 	if err := syscall.Unmount(info.mountPath, 0); err != nil {
 		return err
 	}
-	log.Debugf("[devmapper] Unmount done")
+	log.Debugf("[rbdset] Unmount done")
 
 	info.mountPath = ""
 
