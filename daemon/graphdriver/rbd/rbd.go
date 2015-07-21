@@ -68,7 +68,11 @@ type RbdSet struct {
 }
 
 func (devices *RbdSet) getRbdImageName(hash string) string {
-	return devices.imagePrefix + "_" + hash
+	if hash == "" {
+		return devices.imagePrefix + "_" + devices.baseImageName
+	} else {
+		return devices.imagePrefix + "_" + hash
+	}
 }
 
 func (devices *RbdSet) getRbdSnapName(hash string) string {
@@ -76,7 +80,11 @@ func (devices *RbdSet) getRbdSnapName(hash string) string {
 }
 
 func (devices *RbdSet) getRbdMetaOid(hash string) string {
-	return devices.metaPrefix + "_" + hash
+	if hash == "" {
+		return devices.metaPrefix + "_" + devices.baseImageName
+	} else {
+		return devices.metaPrefix + "_" + hash
+	}
 }
 
 func (devices *RbdSet) initRbdSet(doInit bool) error {
@@ -113,7 +121,7 @@ func (devices *RbdSet) initRbdSet(doInit bool) error {
 
 func (devices *RbdSet) setupBaseImage() error {
 	//check base image is exist
-	oldInfo, err := devices.lookupDevice(devices.baseImageName)
+	oldInfo, err := devices.lookupDevice("")
 	if err != nil {
 		return err
 	}
@@ -131,7 +139,7 @@ func (devices *RbdSet) setupBaseImage() error {
 	}
 
 	// base image is not exist, create it
-	baseName := devices.getRbdImageName(devices.baseImageName)
+	baseName := devices.getRbdImageName("")
 	log.Debugf("Create base rbd image %s", baseName)
 
 	// create initial image
@@ -142,7 +150,7 @@ func (devices *RbdSet) setupBaseImage() error {
 	}
 
 	// register it
-	devInfo, err := devices.registerDevice(devices.baseImageName, "", devices.baseImageSize)
+	devInfo, err := devices.registerDevice("", "", devices.baseImageSize)
 
 	// map it
 	err = devices.mapImageToRbdDevice(devInfo)
@@ -326,8 +334,8 @@ func (devices *RbdSet) saveMetadata(info *DevInfo) error {
 	if err != nil {
 		return fmt.Errorf("Error encoding metadata to json: %s", err)
 	}
-
-	if err = devices.ioctx.Write(metaOid, jsonData, 0); err != nil {
+	
+	if err = devices.ioctx.WriteFull(metaOid, jsonData); err != nil {
 		log.Errorf("Rbd write metadata %s failed: %v", info.Hash, err)
 		return err
 	}
@@ -626,7 +634,7 @@ func (devices *RbdSet) Shutdown() error {
 		info.lock.Unlock()
 	}
 
-	info, _ := devices.lookupDevice(devices.baseImageName)
+	info, _ := devices.lookupDevice("")
 	if info != nil {
 		info.lock.Lock()
 		if err := devices.unmapImageFromRbdDevice(info); err != nil {
