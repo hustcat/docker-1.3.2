@@ -218,37 +218,10 @@ func (devices *RbdSet) lookupDevice(hash string) (*DevInfo, error) {
 
 	if info == nil {
 		info, err := devices.loadMetadata(hash)
-		/*if info == nil && err != nil {
-			return nil, fmt.Errorf("Unknown device %s, error %v", hash, err)
-		}*/
-
 		if info != nil {
 			devices.Devices[hash] = info
 		}
 		return info, err
-		/*
-			imgName := devices.getRbdImageName(hash)
-			img := rbd.GetImage(devices.ioctx, imgName)
-
-			if err := img.Open(); err != nil {
-				return nil, fmt.Errorf("Unknown device %s", hash)
-			}
-
-			defer img.Close()
-
-			if imgInfo, err := img.Stat(); err != nil {
-				return nil, fmt.Errorf("Unknown device %s", hash)
-			}
-
-			info = &DevInfo{
-				Hash:     hash,
-				Device:   "",
-				BaseHash: imgInfo.Parent_name, ///TODO
-				Size:     imgInfo.Size,
-			}
-
-			//TODO: read from metadata
-			devices.Devices[hash] = info*/
 	}
 	return info, nil
 }
@@ -313,7 +286,7 @@ func (devices *RbdSet) loadMetadata(hash string) (*DevInfo, error) {
 			log.Errorf("Rdb read metadata %s failed: %v", metaOid, err)
 			return nil, err
 		}
-		log.Infof("Rbd read metadata %s not found", metaOid)
+		log.Debugf("Rbd read metadata %s not found", metaOid)
 		// not found
 		return nil, nil
 	}
