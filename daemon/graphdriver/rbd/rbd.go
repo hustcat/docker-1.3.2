@@ -334,7 +334,7 @@ func (devices *RbdSet) saveMetadata(info *DevInfo) error {
 	if err != nil {
 		return fmt.Errorf("Error encoding metadata to json: %s", err)
 	}
-	
+
 	if err = devices.ioctx.WriteFull(metaOid, jsonData); err != nil {
 		log.Errorf("Rbd write metadata %s failed: %v", info.Hash, err)
 		return err
@@ -437,36 +437,70 @@ func (devices *RbdSet) deleteImage(info *DevInfo) error {
 	return nil
 }
 
-func (devices *RbdSet) mapImageToRbdDevice(devInfo *DevInfo) error {
-	pool := devices.dataPoolName
-	imgName := devices.getRbdImageName(devInfo.Hash)
-
-	out, err := exec.Command("rbd", "--pool", pool, "map", imgName).Output()
-	if err != nil {
-		return err
-	}
-
+func (devices *RbdSet) imageIsMapped(devInfo *DevInfo) (bool, error) {
 	// Older rbd binaries are not printing the device on mapping so
 	// we have to discover it with showmapped.
-	out, err = exec.Command("rbd", "showmapped", "--format", "json").Output()
+	out, err := exec.Command("rbd", "showmapped", "--format", "json").Output()
 	if err != nil {
-		return err
+		log.Errorf("Rbd run rbd showmapped failed: %v", err)
+		return false, err
 	}
+
+	pool := devices.dataPoolName
+	imgName := devices.getRbdImageName(devInfo.Hash)
 
 	mappingInfos := map[string]*RbdMappingInfo{}
 	json.Unmarshal(out, &mappingInfos)
 
 	for _, info := range mappingInfos {
 		if info.Pool == pool && info.Name == imgName {
-			devInfo.Device = info.Device
-			return nil
+			if devInfo.Device == "" {
+				devInfo.Device = info.Device
+			} else {
+				if devInfo.Device != info.Device {
+					log.Errorf("Rbd image %s is mapped to %s, but not same as expect %s", devInfo.Hash,
+						info.Device, devInfo.Device)
+					devInfo.Device = info.Device
+				}
+			}
+			return true, nil
 		}
 	}
+	return false, nil
+}
 
-	return fmt.Errorf("Unable map image %s", imgName)
+func (devices *RbdSet) mapImageToRbdDevice(devInfo *DevInfo) error {
+	if devInfo.Device != "" {
+		return nil
+	}
+
+	pool := devices.dataPoolName
+	imgName := devices.getRbdImageName(devInfo.Hash)
+
+	_, err := exec.Command("rbd", "--pool", pool, "map", imgName).Output()
+	if err != nil {
+		return err
+	}
+
+	v, _ := devices.imageIsMapped(devInfo)
+	if v == true {
+		return nil
+	} else {
+		return fmt.Errorf("Unable map image %s", imgName)
+	}
 }
 
 func (devices *RbdSet) unmapImageFromRbdDevice(devInfo *DevInfo) error {
+	if devInfo.Device == "" {
+		return nil
+	}
+
+	v, _ := devices.imageIsMapped(devInfo)
+	if v == false {
+		devInfo.Device = ""
+		return nil
+	}
+
 	if err := exec.Command("rbd", "unmap", devInfo.Device).Run(); err != nil {
 		return err
 	}
