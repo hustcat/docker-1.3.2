@@ -5,6 +5,7 @@ package namespaces
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +35,7 @@ func ExecIn(container *libcontainer.Config, state *libcontainer.State, userArgs 
 		Path: initPath,
 		Args: append(args, append([]string{"--"}, userArgs...)...),
 	}
+	log.Printf("init path: %s with args: %v", initPath, cmd.Args)
 
 	if filepath.Base(initPath) == initPath {
 		if lp, err := exec.LookPath(initPath); err == nil {
