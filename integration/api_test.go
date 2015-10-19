@@ -1236,6 +1236,70 @@ func TestPostContainersCgroup(t *testing.T) {
 	}
 }
 
+func TestPostContainersSet(t *testing.T) {
+	eng := NewTestEngine(t)
+	defer mkDaemonFromEngine(eng, t).Nuke()
+
+	memory := int64(4194304)
+	containerID := createTestContainer(eng,
+		&runconfig.Config{
+			Memory:    memory,
+			Image:     unitTestImageID,
+			Cmd:       []string{"/bin/cat"},
+			OpenStdin: true,
+		},
+		t,
+	)
+
+	defer func() {
+		// Make sure the process dies before destroying runtime
+		containerKill(eng, containerID, t)
+		containerWait(eng, containerID, t)
+	}()
+
+	startContainer(eng, containerID, t)
+
+	// Give some time to the process to start
+	containerWaitTimeout(eng, containerID, t)
+
+	if !containerRunning(eng, containerID, t) {
+		t.Errorf("Container should be running")
+	}
+
+	var (
+		setData engine.Env
+		config  []struct {
+			Key   string
+			Value string
+		}
+	)
+	config = append(config, struct {
+		Key   string
+		Value string
+	}{Key: "image", Value: "test:v1"})
+	setData.SetJson("config", config)
+
+	jsonData := bytes.NewBuffer(nil)
+	if err := setData.Encode(jsonData); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRecorder()
+	req, err := http.NewRequest("POST", "/containers/"+containerID+"/set", jsonData)
+	req.Header.Add("Content-Type", "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.ServeRequest(eng, api.APIVERSION, r, req); err != nil {
+		t.Fatal(err)
+	}
+	assertHttpNotError(r, t)
+
+	if r.Code != http.StatusOK {
+		t.Errorf("Expected response for OPTIONS request to be \"200\", %v found.", r.Code)
+	}
+}
+
 // Mocked types for tests
 type NopConn struct {
 	io.ReadCloser

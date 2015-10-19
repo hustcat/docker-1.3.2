@@ -1205,6 +1205,116 @@ func postContainersCgroup(eng *engine.Engine, version version.Version, w http.Re
 	return nil
 }
 
+func postContainersSet(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if vars == nil {
+		return fmt.Errorf("Missing parameter")
+	}
+
+	var (
+		setData engine.Env
+		config  []struct {
+			Key   string
+			Value string
+		}
+	)
+	if contentType := r.Header.Get("Content-Type"); api.MatchesContentType(contentType, "application/json") {
+		if err := setData.Decode(r.Body); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("Content-Type not supported: %s", contentType)
+	}
+
+	if err := setData.GetJson("config", &config); err != nil {
+		return err
+	}
+	job := eng.Job("container_set", vars["name"])
+	job.SetenvJson("config", config)
+
+	job.Stdout.Add(w)
+	if err := job.Run(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func postImagesPullAndApply(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if err := parseForm(r); err != nil {
+		return err
+	}
+
+	var (
+		container    = r.Form.Get("container")
+		fromImage    = r.Form.Get("fromImage")
+		currentImage = r.Form.Get("currentImage")
+		job          *engine.Job
+	)
+	repo, tag := parsers.ParseRepositoryTag(fromImage)
+
+	authEncoded := r.Header.Get("X-Registry-Auth")
+	authConfig := &registry.AuthConfig{}
+	if authEncoded != "" {
+		authJson := base64.NewDecoder(base64.URLEncoding, strings.NewReader(authEncoded))
+		if err := json.NewDecoder(authJson).Decode(authConfig); err != nil {
+			// for a pull it is not an error if no auth was given
+			// to increase compatibility with the existing api it is defaulting to be empty
+			authConfig = &registry.AuthConfig{}
+		}
+	}
+
+	metaHeaders := map[string][]string{}
+	for k, v := range r.Header {
+		if strings.HasPrefix(k, "X-Meta-") {
+			metaHeaders[k] = v
+		}
+	}
+	job = eng.Job("apply_pull", container, currentImage, repo, tag)
+	job.SetenvBool("parallel", version.GreaterThan("1.3"))
+	job.SetenvJson("metaHeaders", metaHeaders)
+	job.SetenvJson("authConfig", authConfig)
+
+	if version.GreaterThan("1.0") {
+		job.SetenvBool("json", true)
+		streamJSON(job, w, true)
+	} else {
+		job.Stdout.Add(utils.NewWriteFlusher(w))
+	}
+	if err := job.Run(); err != nil {
+		if job.Stdout.Used() {
+			sf := utils.NewStreamFormatter(version.GreaterThan("1.0"))
+			w.Write(sf.FormatError(err))
+		}
+		return err
+	}
+
+	return nil
+}
+
+func postImagesDiffAndApply(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if err := parseForm(r); err != nil {
+		return err
+	}
+
+	job := eng.Job("apply_diff", r.Form.Get("container"), r.Form.Get("fromImage"), r.Form.Get("currentImage"))
+
+	if version.GreaterThan("1.0") {
+		job.SetenvBool("json", true)
+		streamJSON(job, w, true)
+	} else {
+		job.Stdout.Add(utils.NewWriteFlusher(w))
+	}
+	if err := job.Run(); err != nil {
+		if job.Stdout.Used() {
+			sf := utils.NewStreamFormatter(version.GreaterThan("1.0"))
+			w.Write(sf.FormatError(err))
+		}
+		return err
+	}
+
+	return nil
+}
+
 func optionsHandler(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	w.WriteHeader(http.StatusOK)
 	return nil
@@ -1316,6 +1426,8 @@ func createRouter(eng *engine.Engine, logging, enableCors bool, dockerVersion st
 			"/images/load":                  postImagesLoad,
 			"/images/{name:.*}/push":        postImagesPush,
 			"/images/{name:.*}/tag":         postImagesTag,
+			"/images/applypull":             postImagesPullAndApply,
+			"/images/applydiff":             postImagesDiffAndApply,
 			"/containers/create":            postContainersCreate,
 			"/containers/{name:.*}/kill":    postContainersKill,
 			"/containers/{name:.*}/pause":   postContainersPause,
@@ -1331,6 +1443,7 @@ func createRouter(eng *engine.Engine, logging, enableCors bool, dockerVersion st
 			"/exec/{name:.*}/start":         postContainerExecStart,
 			"/exec/{name:.*}/resize":        postContainerExecResize,
 			"/containers/{name:.*}/cgroup":  postContainersCgroup,
+			"/containers/{name:.*}/set":     postContainersSet,
 		},
 		"DELETE": {
 			"/containers/{name:.*}": deleteContainers,
