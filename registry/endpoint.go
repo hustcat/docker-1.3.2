@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/docker/docker/pkg/log"
+	log "github.com/Sirupsen/logrus"
 )
 
 // for mocking in unit tests
