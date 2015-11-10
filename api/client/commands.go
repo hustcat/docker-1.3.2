@@ -601,6 +601,11 @@ func (cli *DockerCli) CmdStart(args ...string) error {
 		cErr chan error
 		tty  bool
 
+		// for external monitor
+		monitorURL     string
+		monitorDrv     string
+		externalAttach = false
+
 		cmd       = cli.Subcmd("start", "CONTAINER [CONTAINER...]", "Restart a stopped container")
 		attach    = cmd.Bool([]string{"a", "-attach"}, false, "Attach container's STDOUT and STDERR and forward all signals to the process")
 		openStdin = cmd.Bool([]string{"i", "-interactive"}, false, "Attach container's STDIN")
@@ -618,26 +623,51 @@ func (cli *DockerCli) CmdStart(args ...string) error {
 		if cmd.NArg() > 1 {
 			return fmt.Errorf("You cannot start and attach multiple containers at once.")
 		}
+	}
 
-		steam, _, err := cli.call("GET", "/containers/"+cmd.Arg(0)+"/json", nil, false)
+	steam, _, err := cli.call("GET", "/containers/"+cmd.Arg(0)+"/json", nil, false)
+	if err != nil {
+		return err
+	}
+
+	env := engine.Env{}
+	if err := env.Decode(steam); err != nil {
+		return err
+	}
+
+	config := env.GetSubEnv("Config")
+	monitorDrv = config.Get("MonitorDriver")
+
+	// external monitor, start monitor server at first
+	if monitorDrv == "external" && (*attach || *openStdin) {
+		var v = url.Values{}
+		v.Set("attach", "1")
+		// start the monitor
+		obj, _, err := readBody(cli.call("POST", "/containers/"+cmd.Arg(0)+"/start?"+v.Encode(), nil, false))
 		if err != nil {
 			return err
 		}
 
-		env := engine.Env{}
-		if err := env.Decode(steam); err != nil {
+		externalAttach = true
+
+		m := make(map[string]string)
+		if err := json.Unmarshal(obj, &m); err != nil {
+			log.Errorf("Read redirect url failed")
 			return err
 		}
-		config := env.GetSubEnv("Config")
-		tty = config.GetBool("Tty")
 
+		monitorURL = m["redirect"]
+		log.Debugf("Redirect monitor url %s", monitorURL)
+	}
+
+	if *attach || *openStdin {
+		tty = config.GetBool("Tty")
 		if !tty {
 			sigc := cli.forwardAllSignals(cmd.Arg(0))
 			defer signal.StopCatch(sigc)
 		}
 
 		var in io.ReadCloser
-
 		v := url.Values{}
 		v.Set("stream", "1")
 
@@ -656,7 +686,17 @@ func (cli *DockerCli) CmdStart(args ...string) error {
 
 	var encounteredError error
 	for _, name := range cmd.Args() {
-		_, _, err := readBody(cli.call("POST", "/containers/"+name+"/start", nil, false))
+		var err error
+
+		// TODO: different monitor driver per container
+		if monitorDrv == "external" && externalAttach {
+			// start container by call monitor server start API
+			_, _, err = readBody(cli.callURL("POST", monitorURL, "/containers/"+name+"/start", nil))
+
+		} else {
+			_, _, err = readBody(cli.call("POST", "/containers/"+name+"/start", nil, false))
+		}
+
 		if err != nil {
 			if !*attach || !*openStdin {
 				fmt.Fprintf(cli.err, "%s\n", err)
@@ -681,7 +721,18 @@ func (cli *DockerCli) CmdStart(args ...string) error {
 				log.Errorf("Error monitoring TTY size: %s", err)
 			}
 		}
-		return <-cErr
+
+		err := <-cErr
+		if monitorDrv == "external" {
+			var v = url.Values{}
+			v.Set("op", "stop")
+			// stop monitor
+			_, _, err2 := readBody(cli.call("POST", "/containers/"+cmd.Arg(0)+"/monitor?"+v.Encode(), nil, false))
+			if err2 != nil {
+				log.Errorf("Error stop monitor: %v", err2)
+			}
+		}
+		return err
 	}
 	return nil
 }
@@ -1907,8 +1958,21 @@ func (cli *DockerCli) CmdAttach(args ...string) error {
 		defer signal.StopCatch(sigc)
 	}
 
-	if err := cli.hijack("POST", "/containers/"+cmd.Arg(0)+"/attach?"+v.Encode(), tty, in, cli.out, cli.err, nil, nil); err != nil {
+	err = cli.hijack("POST", "/containers/"+cmd.Arg(0)+"/attach?"+v.Encode(), tty, in, cli.out, cli.err, nil, nil)
+
+	// return hijack error
+	if err != nil {
 		return err
+	}
+
+	if config.Get("MonitorDriver") == "external" {
+		var v = url.Values{}
+		v.Set("op", "stop")
+		// stop monitor
+		_, _, err2 := readBody(cli.call("POST", "/containers/"+cmd.Arg(0)+"/monitor?"+v.Encode(), nil, false))
+		if err2 != nil {
+			log.Errorf("Error stop monitor: %v", err2)
+		}
 	}
 
 	_, status, err := getExitCode(cli, cmd.Arg(0))
@@ -2174,11 +2238,14 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 
 	// These are flags not stored in Config/HostConfig
 	var (
-		flAutoRemove = cmd.Bool([]string{"#rm", "-rm"}, false, "Automatically remove the container when it exits (incompatible with -d)")
-		flDetach     = cmd.Bool([]string{"d", "-detach"}, false, "Detached mode: run the container in the background and print the new container ID")
-		flSigProxy   = cmd.Bool([]string{"#sig-proxy", "-sig-proxy"}, true, "Proxy received signals to the process (even in non-TTY mode). SIGCHLD, SIGSTOP, and SIGKILL are not proxied.")
-		flName       = cmd.String([]string{"#name", "-name"}, "", "Assign a name to the container")
-		flAttach     *opts.ListOpts
+		monitorURL     string
+		monitorDrv     string
+		externalAttach = false
+		flAutoRemove   = cmd.Bool([]string{"#rm", "-rm"}, false, "Automatically remove the container when it exits (incompatible with -d)")
+		flDetach       = cmd.Bool([]string{"d", "-detach"}, false, "Detached mode: run the container in the background and print the new container ID")
+		flSigProxy     = cmd.Bool([]string{"#sig-proxy", "-sig-proxy"}, true, "Proxy received signals to the process (even in non-TTY mode). SIGCHLD, SIGSTOP, and SIGKILL are not proxied.")
+		flName         = cmd.String([]string{"#name", "-name"}, "", "Assign a name to the container")
+		flAttach       *opts.ListOpts
 
 		ErrConflictAttachDetach               = fmt.Errorf("Conflicting options: -a and -d")
 		ErrConflictRestartPolicyAndAutoRemove = fmt.Errorf("Conflicting options: --restart and --rm")
@@ -2193,6 +2260,8 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		cmd.Usage()
 		return nil
 	}
+
+	monitorDrv = config.MonitorDriver
 
 	if *flDetach {
 		if fl := cmd.Lookup("attach"); fl != nil {
@@ -2257,6 +2326,35 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		}
 	}()
 
+	// external monitor, start monitor server at first
+	if config.MonitorDriver == "external" {
+		var obj []byte
+		if config.AttachStdin || config.AttachStdout || config.AttachStderr {
+			var v = url.Values{}
+			v.Set("attach", "1")
+			// start the monitor
+			if obj, _, err = readBody(cli.call("POST", "/containers/"+runResult.Get("Id")+"/start?"+v.Encode(), hostConfig, false)); err != nil {
+				return err
+			}
+
+			externalAttach = true
+
+			m := make(map[string]string)
+			if err := json.Unmarshal(obj, &m); err != nil {
+				log.Errorf("Read redirect url failed")
+				return err
+			}
+
+			monitorURL = m["redirect"]
+			log.Debugf("Redirect url %s", monitorURL)
+		} else {
+			// start the monitor, and docker daemon will also start container
+			if obj, _, err = readBody(cli.call("POST", "/containers/"+runResult.Get("Id")+"/start", hostConfig, false)); err != nil {
+				return err
+			}
+		}
+	}
+
 	if config.AttachStdin || config.AttachStdout || config.AttachStderr {
 		var (
 			out, stderr io.Writer
@@ -2304,9 +2402,18 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		}
 	}
 
-	//start the container
-	if _, _, err = readBody(cli.call("POST", "/containers/"+runResult.Get("Id")+"/start", hostConfig, false)); err != nil {
-		return err
+	// start the container
+	if config.MonitorDriver == "builtin" {
+		if _, _, err = readBody(cli.call("POST", "/containers/"+runResult.Get("Id")+"/start", hostConfig, false)); err != nil {
+			return err
+		}
+	} else {
+		// attach mode for external monitor, start container by call Monitor start API
+		if externalAttach {
+			if _, _, err = readBody(cli.callURL("POST", monitorURL, "/containers/"+runResult.Get("Id")+"/start", nil)); err != nil {
+				return err
+			}
+		}
 	}
 
 	if (config.AttachStdin || config.AttachStdout || config.AttachStderr) && config.Tty && cli.isTerminalOut {
@@ -2332,6 +2439,16 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 	var status int
 
 	// Attached mode
+	if monitorDrv == "external" {
+		var v = url.Values{}
+		v.Set("op", "stop")
+		// stop monitor
+		_, _, err := readBody(cli.call("POST", "/containers/"+runResult.Get("Id")+"/monitor?"+v.Encode(), nil, false))
+		if err != nil {
+			log.Errorf("Error stop monitor: %v", err)
+		}
+	}
+
 	if *flAutoRemove {
 		// Autoremove: wait for the container to finish, retrieve
 		// the exit code and remove the container

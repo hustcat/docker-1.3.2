@@ -1251,3 +1251,25 @@ func NewDeviceSet(root string, doInit bool, options []string) (*DeviceSet, error
 
 	return devices, nil
 }
+
+func (devices *DeviceSet) RegisterMountedDevice(hash, path string) error {
+	info, err := devices.lookupDevice(hash)
+	if err != nil {
+		return err
+	}
+
+	info.lock.Lock()
+	defer info.lock.Unlock()
+
+	devices.Lock()
+	defer devices.Unlock()
+
+	if info.mountCount > 0 {
+		return fmt.Errorf("Device %s has registered", info.Hash)
+	}
+
+	info.mountCount = 1
+	info.mountPath = path
+
+	return nil
+}

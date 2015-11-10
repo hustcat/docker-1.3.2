@@ -153,3 +153,24 @@ func (d *Driver) Exists(id string) bool {
 func (d *Driver) MountPath() string {
 	return path.Join(d.home, "mnt")
 }
+
+func (d *Driver) Register(id string) error {
+	mp := path.Join(d.home, "mnt", id)
+
+/*
+	// Check the target directories if they exist
+	err := os.MkdirAll(mp, 0755)
+	if err == nil {
+		return fmt.Errorf("Directories %s isn't exist", mp)
+	}
+
+	if err != nil && !os.IsExist(err) {
+		return err
+	}
+*/
+	// Register the device
+	if err := d.DeviceSet.RegisterMountedDevice(id, mp); err != nil {
+		return err
+	}
+	return nil
+}

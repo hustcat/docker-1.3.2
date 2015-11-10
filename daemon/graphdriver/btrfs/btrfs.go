@@ -218,6 +218,10 @@ func (d *Driver) Put(id string) {
 	// so this doesn't need to do anything.
 }
 
+func (d *Driver) Register(id string) error {
+	return fmt.Errorf("Register is not supported")
+}
+
 func (d *Driver) Exists(id string) bool {
 	dir := d.subvolumesDirId(id)
 	_, err := os.Stat(dir)

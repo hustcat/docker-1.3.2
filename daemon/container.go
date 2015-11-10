@@ -91,8 +91,14 @@ type Container struct {
 	VolumesRW  map[string]bool
 	hostConfig *runconfig.HostConfig
 
-	activeLinks  map[string]*links.Link
-	monitor      *containerMonitor
+	activeLinks map[string]*links.Link
+
+	//MonitorDriver builtin or external
+	MonitorDriver string
+	exMonitor     *MonitorProxy
+	monitorState  *MonitorState
+	monitor       *containerMonitor
+
 	execCommands *execStore
 }
 
@@ -173,6 +179,76 @@ func (container *Container) WriteHostConfig() error {
 	}
 
 	pth, err := container.hostConfigPath()
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(pth, data, 0666)
+}
+
+func (container *Container) ReadCommandConfig() error {
+	container.command = &execdriver.Command{}
+	// If the command file does not exist, do not read it.
+	// (We still have to initialize container.hostConfig,
+	// but that's OK, since we just did that above.)
+	pth, err := container.commandConfigPath()
+	if err != nil {
+		return err
+	}
+
+	_, err = os.Stat(pth)
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	data, err := ioutil.ReadFile(pth)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, container.command)
+}
+
+func (container *Container) ReadMonitorState() error {
+	container.monitorState = &MonitorState{}
+
+	pth, err := container.monitorPath()
+	if err != nil {
+		return err
+	}
+
+	_, err = os.Stat(pth)
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	data, err := ioutil.ReadFile(pth)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, container.monitorState)
+}
+
+func (container *Container) WriteCommandConfig() error {
+	data, err := json.Marshal(container.command)
+	if err != nil {
+		return err
+	}
+
+	pth, err := container.commandConfigPath()
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(pth, data, 0666)
+}
+
+func (container *Container) WriteMonitorState() error {
+	data, err := json.Marshal(container.monitorState)
+	if err != nil {
+		return err
+	}
+
+	pth, err := container.monitorPath()
 	if err != nil {
 		return err
 	}
@@ -285,7 +361,7 @@ func populateCommand(c *Container, env []string) error {
 	return nil
 }
 
-func (container *Container) Start() (err error) {
+func (container *Container) startBuiltin() (err error) {
 	container.Lock()
 	defer container.Unlock()
 
@@ -333,6 +409,70 @@ func (container *Container) Start() (err error) {
 	}
 
 	return container.waitForStart()
+}
+
+func (container *Container) startExternal() (err error) {
+	container.Lock()
+	defer container.Unlock()
+
+	if container.Running {
+		return nil
+	}
+
+	// if we encounter and error during start we need to ensure that any other
+	// setup has been cleaned up properly
+	defer func() {
+		if err != nil {
+			container.cleanup()
+		}
+	}()
+
+	if err := container.setupContainerDns(); err != nil {
+		return err
+	}
+	if err := container.Mount(); err != nil {
+		return err
+	}
+	if err := container.initializeNetworking(); err != nil {
+		return err
+	}
+	if err := container.updateParentsHosts(); err != nil {
+		return err
+	}
+	container.verifyDaemonSettings()
+	if err := container.prepareVolumes(); err != nil {
+		return err
+	}
+	linkedEnv, err := container.setupLinkedContainers()
+	if err != nil {
+		return err
+	}
+	if err := container.setupWorkingDirectory(); err != nil {
+		return err
+	}
+	env := container.createDaemonEnvironment(linkedEnv)
+	if err := populateCommand(container, env); err != nil {
+		return err
+	}
+	if err := container.setupMounts(); err != nil {
+		return err
+	}
+
+	if err := container.WriteCommandConfig(); err != nil {
+		log.Errorf("Write command.json failed: %v", err)
+		return err
+	}
+
+	return container.waitForStart()
+}
+
+func (container *Container) Start() (err error) {
+	if container.Config.MonitorDriver == MonitorBuiltin {
+		return container.startBuiltin()
+	} else {
+		return container.startExternal()
+	}
+
 }
 
 func (container *Container) Run() error {
@@ -594,7 +734,9 @@ func (container *Container) KillSig(sig int) error {
 
 	// signal to the monitor that it should not restart the container
 	// after we send the kill signal
-	container.monitor.ExitOnNext()
+	if container.MonitorDriver == MonitorBuiltin {
+		container.monitor.ExitOnNext()
+	}
 
 	// if the container is currently restarting we do not need to send the signal
 	// to the process.  Telling the monitor that it should exit on it's next event
@@ -656,21 +798,75 @@ func (container *Container) Stop(seconds int) error {
 		return nil
 	}
 
-	// 1. Send a SIGTERM
-	if err := container.KillSig(15); err != nil {
-		log.Infof("Failed to send SIGTERM to the process, force killing")
-		if err := container.KillSig(9); err != nil {
+	if container.Config.MonitorDriver == MonitorBuiltin {
+		// 1. Send a SIGTERM
+		if err := container.KillSig(15); err != nil {
+			log.Infof("Failed to send SIGTERM to the process, force killing")
+			if err := container.KillSig(9); err != nil {
+				return err
+			}
+		}
+
+		// 2. Wait for the process to exit on its own
+		if _, err := container.WaitStop(time.Duration(seconds) * time.Second); err != nil {
+			log.Infof("Container %v failed to exit within %d seconds of SIGTERM - using the force", container.ID, seconds)
+			// 3. If it doesn't, then send SIGKILL
+			if err := container.Kill(); err != nil {
+				container.WaitStop(-1 * time.Second)
+				return err
+			}
+		}
+	} else {
+		// call monitor server stop API, then kill monitor server
+		obj, err := container.daemon.callMonitorAPI(container, "POST", "stop")
+		if err != nil {
+			log.Errorf("Call monitor stop API failed: %v", err)
 			return err
 		}
-	}
 
-	// 2. Wait for the process to exit on its own
-	if _, err := container.WaitStop(time.Duration(seconds) * time.Second); err != nil {
-		log.Infof("Container %v failed to exit within %d seconds of SIGTERM - using the force", container.ID, seconds)
-		// 3. If it doesn't, then send SIGKILL
-		if err := container.Kill(); err != nil {
-			container.WaitStop(-1 * time.Second)
+		m := make(map[string]int)
+		if err = json.Unmarshal(obj, &m); err != nil {
+			log.Errorf("Decode exitcode error: %v", err)
 			return err
+		}
+
+		rc := m["ExitCode"]
+		log.Debugf("container %s exit with code: %v", container.ID, rc)
+
+		// If daemon alive, do these after cmd.Wait. Because monitor maybe not stopped by daemon stop API,
+		// such as in attach mode, client will not call daemon stop API, but call daemon monitor op API
+		// to stop monitor server.
+
+		// stop poll container state before kill monitor server
+		container.exMonitor.StopStatePoller()
+
+		// daemon have deattached with monitor
+		if container.exMonitor.hasCmd == false {
+			container.SetStopped(rc)
+
+			container.cleanup()
+			if err = container.toDisk(); err != nil {
+				log.Errorf("Error dumping container %s state to disk: %s", container.ID, err)
+			}
+
+			// kill monitor server
+			if err := syscall.Kill(container.monitorState.Pid, syscall.SIGTERM); err != nil {
+				log.Errorf("kill monitor server with pid %v error: %v", container.monitorState.Pid, err)
+				return err
+			}
+
+			// write monitor state
+			container.monitorState.SetStopped(0)
+			if err = container.WriteMonitorState(); err != nil {
+				log.Errorf("write monitor state error: %v", err)
+				return err
+			}
+		} else {
+			// kill monitor server
+			if err := syscall.Kill(container.monitorState.Pid, syscall.SIGTERM); err != nil {
+				log.Errorf("kill monitor server with pid %v error: %v", container.monitorState.Pid, err)
+				return err
+			}
 		}
 	}
 	return nil
@@ -781,6 +977,14 @@ func (container *Container) ReadLog(name string) (io.Reader, error) {
 
 func (container *Container) hostConfigPath() (string, error) {
 	return container.getRootResourcePath("hostconfig.json")
+}
+
+func (container *Container) commandConfigPath() (string, error) {
+	return container.getRootResourcePath("command.json")
+}
+
+func (container *Container) monitorPath() (string, error) {
+	return container.getRootResourcePath("monitor.json")
 }
 
 func (container *Container) jsonPath() (string, error) {
@@ -1178,14 +1382,33 @@ func (container *Container) startLoggingToDisk() error {
 }
 
 func (container *Container) waitForStart() error {
-	container.monitor = newContainerMonitor(container, container.hostConfig.RestartPolicy)
+	if container.Config.MonitorDriver == MonitorBuiltin {
+		container.monitor = newContainerMonitor(container, container.hostConfig.RestartPolicy)
 
-	// block until we either receive an error from the initial start of the container's
-	// process or until the process is running in the container
-	select {
-	case <-container.monitor.startSignal:
-	case err := <-promise.Go(container.monitor.Start):
-		return err
+		// block until we either receive an error from the initial start of the container's
+		// process or until the process is running in the container
+		select {
+		case <-container.monitor.startSignal:
+		case err := <-promise.Go(container.monitor.Start):
+			return err
+		}
+	} else {
+		monitor := NewMonitorProxy(container, true)
+		container.exMonitor = monitor
+		select {
+		case <-container.exMonitor.startSignal:
+			pid := monitor.monitorCommand.cmd.Process.Pid
+			container.monitorState.SetRunning(pid)
+			log.Debugf("Monitor process has started with pid %v", pid)
+			if err := container.WriteMonitorState(); err != nil {
+				log.Errorf("write monitor state error: %v", err)
+			}
+		case err := <-promise.Go(monitor.Start):
+			if err != nil {
+				log.Debugf("MonitorProxy start error: %v", err)
+			}
+			return err
+		}
 	}
 
 	return nil

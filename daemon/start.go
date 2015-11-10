@@ -16,6 +16,7 @@ func (daemon *Daemon) ContainerStart(job *engine.Job) engine.Status {
 	var (
 		name      = job.Args[0]
 		container = daemon.Get(name)
+		attach    = job.GetenvBool("attach")
 	)
 
 	if container == nil {
@@ -40,6 +41,23 @@ func (daemon *Daemon) ContainerStart(job *engine.Job) engine.Status {
 		return job.Errorf("Cannot start container %s: %s", name, err)
 	}
 
+	if container.Config.MonitorDriver != MonitorBuiltin {
+		if attach {
+			// attach mode, call monitor server start API by client
+			loc := fmt.Sprintf("unix://%s/%s.sock", MonitorSockDir, container.ID)
+			out := &engine.Env{}
+			out.Set("redirect", loc)
+			if _, err := out.WriteTo(job.Stdout); err != nil {
+				return job.Error(err)
+			}
+		} else {
+			// Call monitor server start API
+			_, err := container.daemon.callMonitorAPI(container, "POST", "start")
+			if err != nil {
+				return job.Error(err)
+			}
+		}
+	}
 	return engine.StatusOK
 }
 

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/docker/libcontainer/label"
@@ -130,6 +132,7 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 		"execStart":         daemon.ContainerExecStart,
 		"execResize":        daemon.ContainerExecResize,
 		"cgroup":            daemon.ContainerCgroup,
+		"monitor":           daemon.ContainerMonitorOp,
 	} {
 		if err := eng.Register(name, method); err != nil {
 			return err
@@ -230,44 +233,105 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 	//        if so, then we need to restart monitor and init a new lock
 	// If the container is supposed to be running, make sure of it
 	if container.IsRunning() {
-		log.Debugf("killing old running container %s", container.ID)
+		if container.MonitorDriver == MonitorBuiltin {
+			log.Debugf("killing old running container %s", container.ID)
 
-		existingPid := container.Pid
-		container.SetStopped(0)
+			existingPid := container.Pid
+			container.SetStopped(0)
 
-		// We only have to handle this for lxc because the other drivers will ensure that
-		// no processes are left when docker dies
-		if container.ExecDriver == "" || strings.Contains(container.ExecDriver, "lxc") {
-			lxc.KillLxc(container.ID, 9)
-		} else {
-			// use the current driver and ensure that the container is dead x.x
-			cmd := &execdriver.Command{
-				ID: container.ID,
+			// We only have to handle this for lxc because the other drivers will ensure that
+			// no processes are left when docker dies
+			if container.ExecDriver == "" || strings.Contains(container.ExecDriver, "lxc") {
+				lxc.KillLxc(container.ID, 9)
+			} else {
+				// use the current driver and ensure that the container is dead x.x
+				cmd := &execdriver.Command{
+					ID: container.ID,
+				}
+				var err error
+				cmd.ProcessConfig.Process, err = os.FindProcess(existingPid)
+				if err != nil {
+					log.Debugf("cannot find existing process for %d", existingPid)
+				}
+				daemon.execDriver.Terminate(cmd)
 			}
-			var err error
-			cmd.ProcessConfig.Process, err = os.FindProcess(existingPid)
-			if err != nil {
-				log.Debugf("cannot find existing process for %d", existingPid)
+
+			if err := container.Unmount(); err != nil {
+				log.Debugf("unmount error %s", err)
 			}
-			daemon.execDriver.Terminate(cmd)
-		}
-
-		if err := container.Unmount(); err != nil {
-			log.Debugf("unmount error %s", err)
-		}
-		if err := container.ToDisk(); err != nil {
-			log.Debugf("saving stopped state to disk %s", err)
-		}
-
-		info := daemon.execDriver.Info(container.ID)
-		if !info.IsRunning() {
-			log.Debugf("Container %s was supposed to be running but is not.", container.ID)
-
-			log.Debugf("Marking as stopped")
-
-			container.SetStopped(-127)
 			if err := container.ToDisk(); err != nil {
-				return err
+				log.Debugf("saving stopped state to disk %s", err)
+			}
+
+			info := daemon.execDriver.Info(container.ID)
+			if !info.IsRunning() {
+				log.Debugf("Container %s was supposed to be running but is not.", container.ID)
+
+				log.Debugf("Marking as stopped")
+
+				container.SetStopped(-127)
+				if err := container.ToDisk(); err != nil {
+					return err
+				}
+			}
+		} else {
+			// restore external container
+			log.Debugf("restore external container: %s", container.ID)
+			_, err := container.daemon.callMonitorAPI(container, "GET", "_ping")
+			if err != nil {
+				log.Errorf("Call monitor _ping API failed: %v, mark container %s stopped", err, container.ID)
+
+				// Think monitor is down, mark container is down
+				container.SetStopped(-125)
+				if err := container.ToDisk(); err != nil {
+					return err
+				}
+			} else {
+				obj, err := container.daemon.callMonitorAPI(container, "GET", "state")
+				if err != nil {
+					log.Errorf("Call monitor state API failed: %v", err)
+					return err
+				}
+
+				m := make(map[string]*WatchState)
+				if err = json.Unmarshal(obj, &m); err != nil {
+					log.Errorf("Decode WatchState error: %v", err)
+					return err
+				}
+				ws := m["WatchState"]
+				log.Debugf("WatchState %v", ws)
+
+				if !ws.Running {
+					log.Errorf("Container %s is supposed be running, but not running in monitor, mark it stopped", container.ID)
+					container.SetStopped(-125)
+					if err = container.ToDisk(); err != nil {
+						return err
+					}
+
+					// kill monitor server
+					if err = syscall.Kill(container.monitorState.Pid, syscall.SIGTERM); err != nil {
+						log.Errorf("kill monitor server with pid %v error: %v", container.monitorState.Pid, err)
+						return err
+					}
+
+					// write monitor state
+					container.monitorState.SetStopped(0)
+					if err = container.WriteMonitorState(); err != nil {
+						log.Errorf("write monitor state error: %v", err)
+						return err
+					}
+				} else { // external container is running
+					// register to graph driver
+					if err := container.daemon.driver.Register(container.ID); err != nil {
+						log.Errorf("register container to graph driver error: %v", err)
+					}
+					monitor := NewMonitorProxy(container, false)
+					container.exMonitor = monitor
+					if err := monitor.RunStatePoller(); err != nil {
+						log.Errorf("Container %s run StatePoll failed: %v", container.ID, err)
+						return err
+					}
+				}
 			}
 		}
 	}
@@ -331,6 +395,13 @@ func (daemon *Daemon) restore() error {
 			containers[container.ID] = container
 		} else {
 			log.Debugf("Cannot load container %s because it was created with another graph driver.", container.ID)
+		}
+
+		if container.MonitorDriver == MonitorExternal {
+			// read monitor state
+			if err = container.ReadMonitorState(); err != nil {
+				log.Errorf("Read monitor state error: %v", err)
+			}
 		}
 	}
 
@@ -583,6 +654,8 @@ func (daemon *Daemon) newContainer(name string, config *runconfig.Config, img *i
 		ExecDriver:      daemon.execDriver.Name(),
 		State:           NewState(),
 		execCommands:    newExecStore(),
+		MonitorDriver:   config.MonitorDriver,
+		monitorState:    NewMonitorState(),
 	}
 	container.root = daemon.containerRoot(container.ID)
 	return container, err
@@ -944,11 +1017,27 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		if err := daemon.shutdown(); err != nil {
 			log.Errorf("daemon.shutdown(): %s", err)
 		}
+	})
+
+	eng.OnShutdown(func() {
+		external := false
+		for _, c := range daemon.List() {
+			if c.MonitorDriver == MonitorExternal {
+				external = true
+			}
+		}
+
+		// hasn't external monitor container, don't call Cleanup
+		if !external {
+			if err := daemon.driver.Cleanup(); err != nil {
+				log.Errorf("daemon.driver.Cleanup(): %s", err.Error())
+			}
+		}
+	})
+
+	eng.OnShutdown(func() {
 		if err := portallocator.ReleaseAll(); err != nil {
 			log.Errorf("portallocator.ReleaseAll(): %s", err)
-		}
-		if err := daemon.driver.Cleanup(); err != nil {
-			log.Errorf("daemon.driver.Cleanup(): %s", err.Error())
 		}
 		if err := daemon.containerGraph.Close(); err != nil {
 			log.Errorf("daemon.containerGraph.Close(): %s", err.Error())
@@ -964,22 +1053,26 @@ func (daemon *Daemon) shutdown() error {
 	for _, container := range daemon.List() {
 		c := container
 		if c.IsRunning() {
-			log.Debugf("stopping %s", c.ID)
-			group.Add(1)
+			if c.MonitorDriver == MonitorBuiltin {
+				log.Debugf("stopping %s", c.ID)
+				group.Add(1)
 
-			go func() {
-				defer group.Done()
-				if err := c.KillSig(15); err != nil {
-					log.Debugf("kill 15 error for %s - %s", c.ID, err)
-				}
-				if _, err := c.WaitStop(3 * time.Second); err != nil {
-					log.Infof("Container %v failed to exit within %d seconds of SIGTERM - using the force", c.ID, 3)
-					if err := c.Kill(); err != nil {
-						c.WaitStop(-1 * time.Second)
+				go func() {
+					defer group.Done()
+					if err := c.KillSig(15); err != nil {
+						log.Debugf("kill 15 error for %s - %s", c.ID, err)
 					}
-				}
-				log.Debugf("container stopped %s", c.ID)
-			}()
+					if _, err := c.WaitStop(3 * time.Second); err != nil {
+						log.Infof("Container %v failed to exit within %d seconds of SIGTERM - using the force", c.ID, 3)
+						if err := c.Kill(); err != nil {
+							c.WaitStop(-1 * time.Second)
+						}
+					}
+					log.Debugf("container stopped %s", c.ID)
+				}()
+			} else {
+				log.Infof("external monitor, skip %s", c.ID)
+			}
 		}
 	}
 	group.Wait()
@@ -1150,4 +1243,16 @@ func checkKernelAndArch() error {
 		}
 	}
 	return nil
+}
+
+func (daemon *Daemon) callMonitorAPI(container *Container, method, api string) ([]byte, error) {
+	url := fmt.Sprintf("unix://%s/%s.sock", MonitorSockDir, container.ID)
+	path := fmt.Sprintf("/containers/%s/%s", container.ID, api)
+
+	obj, _, err := CallURL(method, url, path, nil)
+	if err != nil {
+		log.Errorf("Call monitor %s API failed: %v", api, err)
+		return nil, err
+	}
+	return obj, nil
 }
