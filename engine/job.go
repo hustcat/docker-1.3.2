@@ -40,6 +40,7 @@ const (
 	StatusOK       Status = 0
 	StatusErr      Status = 1
 	StatusNotFound Status = 127
+	StatusRedirect Status = 10
 )
 
 // Run executes the job and blocks until the job completes.

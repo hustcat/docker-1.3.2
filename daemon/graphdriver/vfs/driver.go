@@ -98,6 +98,10 @@ func (d *Driver) Put(id string) {
 	// to clean up, so we don't need anything here
 }
 
+func (d *Driver) Register(id string) error {
+	return fmt.Errorf("Register is not supported")
+}
+
 func (d *Driver) Exists(id string) bool {
 	_, err := os.Stat(d.dir(id))
 	return err == nil

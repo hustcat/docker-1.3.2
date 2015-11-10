@@ -25,6 +25,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
+	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/pkg/listenbuffer"
 	"github.com/docker/docker/pkg/parsers"
@@ -92,18 +93,26 @@ func httpError(w http.ResponseWriter, err error) {
 	// FIXME: this is brittle and should not be necessary.
 	// If we need to differentiate between different possible error types, we should
 	// create appropriate error types with clearly defined meaning.
-	if strings.Contains(err.Error(), "No such") {
-		statusCode = http.StatusNotFound
-	} else if strings.Contains(err.Error(), "Bad parameter") {
-		statusCode = http.StatusBadRequest
-	} else if strings.Contains(err.Error(), "Conflict") {
-		statusCode = http.StatusConflict
-	} else if strings.Contains(err.Error(), "Impossible") {
-		statusCode = http.StatusNotAcceptable
-	} else if strings.Contains(err.Error(), "Wrong login/password") {
-		statusCode = http.StatusUnauthorized
-	} else if strings.Contains(err.Error(), "hasn't been activated") {
-		statusCode = http.StatusForbidden
+	errStr := strings.ToLower(err.Error())
+	for keyword, status := range map[string]int{
+		"not found":             http.StatusNotFound,
+		"no such":               http.StatusNotFound,
+		"bad parameter":         http.StatusBadRequest,
+		"conflict":              http.StatusConflict,
+		"impossible":            http.StatusNotAcceptable,
+		"wrong login/password":  http.StatusUnauthorized,
+		"hasn't been activated": http.StatusForbidden,
+		"redirect to:":          http.StatusMovedPermanently,
+	} {
+		if strings.Contains(errStr, keyword) {
+			statusCode = status
+			if status == http.StatusMovedPermanently {
+				addr := strings.TrimLeft(errStr, keyword)
+				log.Debugf("redirect to %s", addr)
+				w.Header().Set("Location", addr)
+			}
+			break
+		}
 	}
 
 	if err != nil {
@@ -746,6 +755,9 @@ func deleteImages(eng *engine.Engine, version version.Version, w http.ResponseWr
 }
 
 func postContainersStart(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if err := parseForm(r); err != nil {
+		return err
+	}
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
@@ -753,6 +765,8 @@ func postContainersStart(eng *engine.Engine, version version.Version, w http.Res
 		name = vars["name"]
 		job  = eng.Job("start", name)
 	)
+
+	job.Setenv("attach", r.Form.Get("attach"))
 
 	// If contentLength is -1, we can assumed chunked encoding
 	// or more technically that the length is unknown
@@ -770,6 +784,8 @@ func postContainersStart(eng *engine.Engine, version version.Version, w http.Res
 		}
 	}
 
+	streamJSON(job, w, false)
+
 	if err := job.Run(); err != nil {
 		if err.Error() == "Container already started" {
 			w.WriteHeader(http.StatusNotModified)
@@ -777,7 +793,7 @@ func postContainersStart(eng *engine.Engine, version version.Version, w http.Res
 		}
 		return err
 	}
-	w.WriteHeader(http.StatusNoContent)
+	//w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 
@@ -826,7 +842,26 @@ func postContainersResize(eng *engine.Engine, version version.Version, w http.Re
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
-	if err := eng.Job("resize", vars["name"], r.Form.Get("h"), r.Form.Get("w")).Run(); err != nil {
+
+	var (
+		job    = eng.Job("container_inspect", vars["name"])
+		c, err = job.Stdout.AddEnv()
+	)
+	if err != nil {
+		return err
+	}
+	if err = job.Run(); err != nil {
+		return err
+	}
+
+	monitorDriver := c.Get("MonitorDriver")
+	if monitorDriver == daemon.MonitorExternal {
+		Id := c.Get("Id")
+		// Redirect to monitor socket
+		return fmt.Errorf("redirect to:%s", fmt.Sprintf("unix://%s/%s.sock", daemon.MonitorSockDir, Id))
+	}
+
+	if err = eng.Job("resize", vars["name"], r.Form.Get("h"), r.Form.Get("w")).Run(); err != nil {
 		return err
 	}
 	return nil
@@ -849,6 +884,13 @@ func postContainersAttach(eng *engine.Engine, version version.Version, w http.Re
 	}
 	if err = job.Run(); err != nil {
 		return err
+	}
+
+	monitorDriver := c.Get("MonitorDriver")
+	if monitorDriver == daemon.MonitorExternal {
+		Id := c.Get("Id")
+		// Redirect to monitor socket
+		return fmt.Errorf("redirect to:%s", fmt.Sprintf("unix://%s/%s.sock", daemon.MonitorSockDir, Id))
 	}
 
 	inStream, outStream, err := hijackServer(w)
@@ -1205,6 +1247,28 @@ func postContainersCgroup(eng *engine.Engine, version version.Version, w http.Re
 	return nil
 }
 
+func postContainersMonitorOp(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if err := parseForm(r); err != nil {
+		return err
+	}
+
+	if vars == nil {
+		return fmt.Errorf("Missing parameter")
+	}
+
+	var (
+		name = vars["name"]
+		job  = eng.Job("monitor", name)
+	)
+
+	job.Setenv("op", r.Form.Get("op"))
+	if err := job.Run(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func optionsHandler(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	w.WriteHeader(http.StatusOK)
 	return nil
@@ -1331,6 +1395,7 @@ func createRouter(eng *engine.Engine, logging, enableCors bool, dockerVersion st
 			"/exec/{name:.*}/start":         postContainerExecStart,
 			"/exec/{name:.*}/resize":        postContainerExecResize,
 			"/containers/{name:.*}/cgroup":  postContainersCgroup,
+			"/containers/{name:.*}/monitor": postContainersMonitorOp,
 		},
 		"DELETE": {
 			"/containers/{name:.*}": deleteContainers,

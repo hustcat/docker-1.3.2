@@ -48,6 +48,7 @@ func (daemon *Daemon) ContainerInspect(job *engine.Job) engine.Status {
 		out.SetJson("Volumes", container.Volumes)
 		out.SetJson("VolumesRW", container.VolumesRW)
 		out.SetJson("AppArmorProfile", container.AppArmorProfile)
+		out.Set("MonitorDriver", container.MonitorDriver)
 
 		if children, err := daemon.Children(container.Name); err == nil {
 			for linkAlias, child := range children {
