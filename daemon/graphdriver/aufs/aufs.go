@@ -448,3 +448,7 @@ func rollbackMount(target string, err error) {
 		Unmount(target)
 	}
 }
+
+func (a *Driver) MountPath() string {
+	return path.Join(a.rootPath(), "mnt")
+}

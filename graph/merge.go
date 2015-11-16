@@ -35,10 +35,7 @@ func (s *TagStore) CmdDiffAndApply(job *engine.Job) engine.Status {
 		return job.Error(err)
 	}
 
-	root := s.graph.Root
-	root = strings.Replace(root, "graph", "", -1)
-	dest := path.Join(root, "devicemapper", "mnt", containerID, "rootfs")
-
+	dest := path.Join(s.graph.Driver().MountPath(), containerID, "rootfs")
 	fi, err := os.Stat(dest)
 	if err != nil && !os.IsExist(err) {
 		return job.Error(err)
@@ -331,9 +328,7 @@ func (s *TagStore) pullAndMergeImage(r *registry.Session, out io.Writer, contain
 				}
 			}
 			// add layer to container
-			root := s.graph.Root
-			root = strings.Replace(root, "graph", "", -1)
-			dest := path.Join(root, "devicemapper", "mnt", containerID, "rootfs")
+			dest := path.Join(s.graph.Driver().MountPath(), containerID, "rootfs")
 			out.Write(sf.FormatProgress(utils.TruncateID(id), fmt.Sprintf("Merge layer to container rootfs %s", dest), nil))
 			err = archive.ApplyLayer(dest, layer)
 			if err != nil && j == retries {

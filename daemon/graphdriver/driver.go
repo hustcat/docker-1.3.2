@@ -50,6 +50,8 @@ type ProtoDriver interface {
 	// held by the driver, e.g., unmounting all layered filesystems
 	// known to this driver.
 	Cleanup() error
+	// MountPath returns a string mount path of this driver.
+	MountPath() string
 }
 
 // Driver is the interface for layered/snapshot file system drivers.
