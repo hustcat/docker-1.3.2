@@ -432,3 +432,70 @@ func TestWriteCgroup(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteConfig(t *testing.T) {
+	eng := NewTestEngine(t)
+	defer mkDaemonFromEngine(eng, t).Nuke()
+
+	config, hostConfig, _, err := parseRun2([]string{"-i", "-m", "100m", "-c", "1000", unitTestImageID, "/bin/cat"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id := createTestContainer(eng, config, t)
+
+	job := eng.Job("start", id)
+	if err := job.ImportEnv(hostConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := job.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := map[string]string{
+		"image":    "test:v1",
+		"hostname": "test_host",
+	}
+
+	var (
+		config []struct {
+			Key   string
+			Value string
+		}
+	)
+	for key, value := range raw {
+		config = append(config, struct {
+			Key   string
+			Value string
+		}{Key: key, Value: value})
+	}
+
+	job = eng.Job("container_set", id)
+	job.SetenvJson("config", config)
+	responses, err := job.Stdout.AddListTable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := job.Run(); err != nil {
+		t.Fatal("Unexpected error: %s", err)
+	}
+
+	if len(responses.Data) != 2 {
+		t.Fatalf("Except length is 2, actual is %d", len(responses.Data))
+	}
+
+	for _, response := range responses.Data {
+		if response.GetInt("Status") != 0 {
+			t.Fatalf("Unexcepted status %d for key  %s, cause by %s", response.GetInt("Status"), response.Get("Key"), response.Get("Err"))
+		}
+		value, exist := raw[response.Get("Key")]
+		if exist {
+			if response.Get("Err") != "" {
+				t.Fatalf("Unexcepted stderr %s for key %s", response.Get("Err"), response.Get("Key"))
+			}
+		} else {
+			t.Fatalf("Unexcepted key %s", response.Get("Key"))
+		}
+	}
+}

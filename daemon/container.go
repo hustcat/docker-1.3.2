@@ -701,7 +701,17 @@ func (container *Container) ExportRw() (archive.Archive, error) {
 	if container.daemon == nil {
 		return nil, fmt.Errorf("Can't load storage driver for unregistered container %s", container.ID)
 	}
-	archive, err := container.daemon.Diff(container)
+	var (
+		commitID = fmt.Sprintf("%s-commit", container.ID)
+		driver   = container.daemon.driver
+	)
+	// create tmp rootfs for commit
+	if err := container.daemon.createTmpRootfs(container); err != nil {
+		return nil, err
+	}
+	defer driver.Remove(commitID)
+
+	archive, err := driver.Diff(container.ID, commitID)
 	if err != nil {
 		container.Unmount()
 		return nil, err

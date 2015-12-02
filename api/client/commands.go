@@ -2604,3 +2604,171 @@ func (cli *DockerCli) CmdCgroup(args ...string) error {
 	}
 	return encounteredError
 }
+
+func (cli *DockerCli) CmdConfig(args ...string) error {
+	cmd := cli.Subcmd("config", "[OPTIONS] CONTAINER KEY=VALUE...", "Set a running container's configuration")
+
+	if err := cmd.Parse(args); err != nil {
+		return nil
+	}
+	if cmd.NArg() < 2 {
+		cmd.Usage()
+		return nil
+	}
+
+	var (
+		name    = cmd.Arg(0)
+		setData engine.Env
+		config  []struct {
+			Key   string
+			Value string
+		}
+	)
+
+	for _, entry := range cmd.Args()[1:] {
+		pair := strings.Split(entry, "=")
+		if len(pair) != 2 {
+			return fmt.Errorf("Error: config parameters continue to be 'key=value'")
+		} else {
+			config = append(config, struct {
+				Key   string
+				Value string
+			}{Key: pair[0], Value: pair[1]})
+		}
+	}
+	setData.SetJson("config", config)
+
+	var encounteredError error
+
+	body, _, err := readBody(cli.call("POST", "/containers/"+name+"/set", setData, false))
+
+	if err != nil {
+		fmt.Fprintf(cli.err, "%s\n", err)
+		encounteredError = fmt.Errorf("Error: failed to change configuration on this container")
+	} else {
+		fmt.Fprintln(cli.out, string(body))
+	}
+	return encounteredError
+}
+
+func (cli *DockerCli) CmdMerge(args ...string) error {
+	cmd := cli.Subcmd("merge", " CONTAINER REPOSITORY:TAG", "Merge container image online")
+	flType := cmd.String([]string{"t", "-type"}, "pull", "Merge type: 'diff' or 'pull', default 'pull'")
+	if err := cmd.Parse(args); err != nil {
+		return nil
+	}
+
+	var (
+		v         = url.Values{}
+		container = cmd.Arg(0)
+		remote    = cmd.Arg(1)
+		setData   engine.Env
+		config    []struct {
+			Key   string
+			Value string
+		}
+	)
+
+	if cmd.NArg() != 2 {
+		cmd.Usage()
+		return nil
+	}
+	if *flType != "pull" && *flType != "diff" {
+		return fmt.Errorf("Type must be 'pull' or 'diff'")
+	}
+	repository, tag := parsers.ParseRepositoryTag(remote)
+	if tag == "" {
+		return fmt.Errorf("Missing tag")
+	}
+	// fromImage refers to the new image
+	v.Set("fromImage", remote)
+	// Resolve the Repository name from fqn to hostname + name
+	hostname, _, err := registry.ResolveRepositoryName(repository)
+	if err != nil {
+		return err
+	}
+
+	cli.LoadConfigFile()
+
+	// Resolve the Auth config relevant for this server
+	authConfig := cli.configFile.ResolveAuthConfig(hostname)
+
+	// First: get container current image
+	stream, _, err := cli.call("GET", "/containers/"+container+"/json", nil, false)
+	if err != nil {
+		return err
+	}
+
+	env := engine.Env{}
+	if err := env.Decode(stream); err != nil {
+		return err
+	}
+	if !env.GetSubEnv("State").GetBool("Running") {
+		return fmt.Errorf("You cannot merge to a stopped container, start it first")
+	}
+	if env.Get("Image") == "" {
+		return fmt.Errorf("Container Image is null, please check")
+	}
+	// currentImage refers to the current container's image
+	v.Set("currentImage", env.Get("Image"))
+	v.Set("container", env.Get("Id"))
+
+	// Second: pull and merge image
+	pull := func(authConfig registry.AuthConfig) error {
+		buf, err := json.Marshal(authConfig)
+		if err != nil {
+			return err
+		}
+		registryAuthHeader := []string{
+			base64.URLEncoding.EncodeToString(buf),
+		}
+		if *flType == "pull" {
+			return cli.stream("POST", "/images/applypull?"+v.Encode(), nil, cli.out, map[string][]string{
+				"X-Registry-Auth": registryAuthHeader,
+			})
+		} else if *flType == "diff" {
+			return cli.stream("POST", "/images/create?"+v.Encode(), nil, cli.out, map[string][]string{
+				"X-Registry-Auth": registryAuthHeader,
+			})
+		} else {
+			return fmt.Errorf("Parameter error")
+		}
+	}
+
+	if err := pull(authConfig); err != nil {
+		if strings.Contains(err.Error(), "Status 401") {
+			fmt.Fprintln(cli.out, "\nPlease login prior to pull:")
+			if err := cli.CmdLogin(hostname); err != nil {
+				return err
+			}
+			authConfig := cli.configFile.ResolveAuthConfig(hostname)
+			if err := pull(authConfig); err != nil {
+				return err
+			}
+		}
+		return err
+	}
+
+	if *flType == "diff" {
+		if err := cli.stream("POST", "/images/applydiff?"+v.Encode(), nil, cli.out, nil); err != nil {
+			return err
+		}
+	}
+
+	// Third : reset container config
+	config = append(config, struct {
+		Key   string
+		Value string
+	}{Key: "image", Value: repository + ":" + tag})
+	setData.SetJson("config", config)
+	body, _, err := readBody(cli.call("POST", "/containers/"+container+"/set", setData, false))
+
+	if err != nil {
+		fmt.Fprintf(cli.err, "%s\n", err)
+		return fmt.Errorf("Error: failed to change config on this container")
+	} else {
+		fmt.Fprintln(cli.out, string(body))
+	}
+
+	return nil
+}

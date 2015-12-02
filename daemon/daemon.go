@@ -109,6 +109,7 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 		"container_changes": daemon.ContainerChanges,
 		"container_copy":    daemon.ContainerCopy,
 		"container_inspect": daemon.ContainerInspect,
+		"container_set":     daemon.ContainerSet,
 		"containers":        daemon.Containers,
 		"create":            daemon.ContainerCreate,
 		"rm":                daemon.ContainerRm,
@@ -608,6 +609,26 @@ func (daemon *Daemon) createRootfs(container *Container, img *image.Image) error
 	}
 
 	if err := daemon.driver.Create(container.ID, initID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (daemon *Daemon) createTmpRootfs(container *Container) error {
+	if _, err := os.Stat(container.root); err != nil && os.IsNotExist(err) {
+		return err
+	}
+	commitID := fmt.Sprintf("%s-commit", container.ID)
+	if err := daemon.driver.Create(commitID, container.Image); err != nil {
+		return err
+	}
+	commitPath, err := daemon.driver.Get(commitID, "")
+	if err != nil {
+		return err
+	}
+	defer daemon.driver.Put(commitID)
+
+	if err := graph.SetupInitLayer(commitPath); err != nil {
 		return err
 	}
 	return nil

@@ -149,3 +149,7 @@ func (d *Driver) Put(id string) {
 func (d *Driver) Exists(id string) bool {
 	return d.DeviceSet.HasDevice(id)
 }
+
+func (d *Driver) MountPath() string {
+	return path.Join(d.home, "mnt")
+}

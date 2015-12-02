@@ -223,3 +223,7 @@ func (d *Driver) Exists(id string) bool {
 	_, err := os.Stat(dir)
 	return err == nil
 }
+
+func (d *Driver) MountPath() string {
+	return path.Join(d.home, "subvolumes")
+}

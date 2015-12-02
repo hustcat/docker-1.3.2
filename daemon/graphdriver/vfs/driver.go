@@ -102,3 +102,7 @@ func (d *Driver) Exists(id string) bool {
 	_, err := os.Stat(d.dir(id))
 	return err == nil
 }
+
+func (d *Driver) MountPath() string {
+	return path.Join(d.home, "dir")
+}
