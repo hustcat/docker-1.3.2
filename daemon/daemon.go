@@ -1013,7 +1013,7 @@ func (daemon *Daemon) Changes(container *Container) ([]archive.Change, error) {
 
 func (daemon *Daemon) Diff(container *Container) (archive.Archive, error) {
 	initID := fmt.Sprintf("%s-init", container.ID)
-	return daemon.driver.Diff(container.ID, initID)
+	return daemon.driver.Diff(container.ID, initID, nil)
 }
 
 func (daemon *Daemon) Run(c *Container, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (int, error) {

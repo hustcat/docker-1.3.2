@@ -1628,12 +1628,13 @@ func (cli *DockerCli) CmdPs(args ...string) error {
 }
 
 func (cli *DockerCli) CmdCommit(args ...string) error {
-	cmd := cli.Subcmd("commit", "CONTAINER [REPOSITORY[:TAG]]", "Create a new image from a container's changes")
+	cmd := cli.Subcmd("commit", "CONTAINER [REPOSITORY[:TAG]] [PATH...]", "Create a new image from a container's changes")
 	flPause := cmd.Bool([]string{"p", "-pause"}, true, "Pause container during commit")
 	flComment := cmd.String([]string{"m", "-message"}, "", "Commit message")
 	flAuthor := cmd.String([]string{"a", "#author", "-author"}, "", "Author (e.g., \"John Hannibal Smith <hannibal@a-team.com>\")")
+	flPathType := cmd.String([]string{"-path-type"}, "", "Specify 'exclude' or 'include' path during commit.")
 	// FIXME: --run is deprecated, it will be replaced with inline Dockerfile commands.
-	flConfig := cmd.String([]string{"#run", "#-run"}, "", "This option is deprecated and will be removed in a future version in favor of inline Dockerfile-compatible commands")
+	//flConfig := cmd.String([]string{"#run", "#-run"}, "", "This option is deprecated and will be removed in a future version in favor of inline Dockerfile-compatible commands")
 	if err := cmd.Parse(args); err != nil {
 		return nil
 	}
@@ -1643,7 +1644,7 @@ func (cli *DockerCli) CmdCommit(args ...string) error {
 		repository, tag = parsers.ParseRepositoryTag(cmd.Arg(1))
 	)
 
-	if name == "" || len(cmd.Args()) > 2 {
+	if name == "" {
 		cmd.Usage()
 		return nil
 	}
@@ -1667,16 +1668,40 @@ func (cli *DockerCli) CmdCommit(args ...string) error {
 	}
 
 	var (
-		config *runconfig.Config
-		env    engine.Env
+		//config *runconfig.Config
+		env     engine.Env
+		data    engine.Env
+		paths   []string
+		options archive.ChangeOptions
 	)
-	if *flConfig != "" {
-		config = &runconfig.Config{}
-		if err := json.Unmarshal([]byte(*flConfig), config); err != nil {
-			return err
+
+	if *flPathType != "" {
+		for _, entry := range cmd.Args()[2:] {
+			if len(entry) > 0 {
+				paths = append(paths, entry)
+			}
+		}
+		switch *flPathType {
+		case "exclude":
+			options = archive.ChangeOptions{
+				Excludes: paths,
+			}
+		case "include":
+			options = archive.ChangeOptions{
+				Includes: paths,
+			}
+		default:
+			return fmt.Errorf("--path-type must be 'exclude' or 'include'")
 		}
 	}
-	stream, _, err := cli.call("POST", "/commit?"+v.Encode(), config, false)
+	data.SetJson("changeOptions", &options)
+	//	if *flConfig != "" {
+	//		config = &runconfig.Config{}
+	//		if err := json.Unmarshal([]byte(*flConfig), config); err != nil {
+	//			return err
+	//		}
+	//	}
+	stream, _, err := cli.call("POST", "/commit?"+v.Encode(), data, false)
 	if err != nil {
 		return err
 	}

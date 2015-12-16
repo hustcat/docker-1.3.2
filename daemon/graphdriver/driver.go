@@ -59,7 +59,8 @@ type Driver interface {
 	ProtoDriver
 	// Diff produces an archive of the changes between the specified
 	// layer and its parent layer which may be "".
-	Diff(id, parent string) (archive.Archive, error)
+	// options specify 'exclude' or 'include' path during commit
+	Diff(id, parent string, options *archive.ChangeOptions) (archive.Archive, error)
 	// Changes produces a list of changes between the specified layer
 	// and its parent layer. If parent is "", then all changes will be ADD changes.
 	Changes(id, parent string) ([]archive.Change, error)

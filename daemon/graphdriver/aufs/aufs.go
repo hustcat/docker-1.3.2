@@ -297,10 +297,12 @@ func (a *Driver) Put(id string) {
 
 // Diff produces an archive of the changes between the specified
 // layer and its parent layer which may be "".
-func (a *Driver) Diff(id, parent string) (archive.Archive, error) {
+func (a *Driver) Diff(id, parent string, options *archive.ChangeOptions) (archive.Archive, error) {
 	// AUFS doesn't need the parent layer to produce a diff.
 	return archive.TarWithOptions(path.Join(a.rootPath(), "diff", id), &archive.TarOptions{
 		Compression: archive.Uncompressed,
+		Includes:    options.Includes,
+		Excludes:    options.Excludes,
 	})
 }
 

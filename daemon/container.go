@@ -694,7 +694,7 @@ func (container *Container) Resize(h, w int) error {
 	return container.command.ProcessConfig.Terminal.Resize(h, w)
 }
 
-func (container *Container) ExportRw() (archive.Archive, error) {
+func (container *Container) ExportRw(options *archive.ChangeOptions) (archive.Archive, error) {
 	if err := container.Mount(); err != nil {
 		return nil, err
 	}
@@ -711,7 +711,7 @@ func (container *Container) ExportRw() (archive.Archive, error) {
 	}
 	defer driver.Remove(commitID)
 
-	archive, err := driver.Diff(container.ID, commitID)
+	archive, err := driver.Diff(container.ID, commitID, options)
 	if err != nil {
 		container.Unmount()
 		return nil, err

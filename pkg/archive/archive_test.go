@@ -95,7 +95,7 @@ func tarUntar(t *testing.T, origin string, options *TarOptions) ([]Change, error
 		return nil, err
 	}
 
-	return ChangesDirs(origin, tmp)
+	return ChangesDirs(origin, tmp, nil)
 }
 
 func TestTarUntar(t *testing.T) {

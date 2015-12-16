@@ -109,7 +109,7 @@ func TestChangesDirsEmpty(t *testing.T) {
 	if err := copyDir(src, dst); err != nil {
 		t.Fatal(err)
 	}
-	changes, err := ChangesDirs(dst, src)
+	changes, err := ChangesDirs(dst, src, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestChangesDirsMutated(t *testing.T) {
 
 	mutateSampleDir(t, dst)
 
-	changes, err := ChangesDirs(dst, src)
+	changes, err := ChangesDirs(dst, src, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestApplyLayer(t *testing.T) {
 	mutateSampleDir(t, dst)
 	defer os.RemoveAll(dst)
 
-	changes, err := ChangesDirs(dst, src)
+	changes, err := ChangesDirs(dst, src, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestApplyLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changes2, err := ChangesDirs(src, dst)
+	changes2, err := ChangesDirs(src, dst, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

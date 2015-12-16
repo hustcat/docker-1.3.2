@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/vendor/src/code.google.com/p/go/src/pkg/archive/tar"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/pools"
 	"github.com/docker/docker/pkg/system"
 )
@@ -28,6 +29,11 @@ const (
 type Change struct {
 	Path string
 	Kind ChangeType
+}
+
+type ChangeOptions struct {
+	Includes []string
+	Excludes []string
 }
 
 func (change *Change) String() string {
@@ -269,8 +275,14 @@ func newRootFileInfo() *FileInfo {
 	return root
 }
 
-func collectFileInfo(sourceDir string) (*FileInfo, error) {
+func collectFileInfo(sourceDir string, options *ChangeOptions) (*FileInfo, error) {
 	root := newRootFileInfo()
+	patterns := make(map[string][]string)
+	if options != nil && len(options.Includes) > 0 {
+		patterns = fileutils.MapFilePaths(options.Includes)
+		log.Infof("Map file path: %v", patterns)
+	}
+	log.Infof("%s Change Options: %v", sourceDir, options)
 
 	err := filepath.Walk(sourceDir, func(path string, f os.FileInfo, err error) error {
 		if err != nil {
@@ -286,6 +298,31 @@ func collectFileInfo(sourceDir string) (*FileInfo, error) {
 
 		if relPath == "/" {
 			return nil
+		}
+
+		if options != nil {
+			var (
+				skip = false
+				keep = true
+			)
+			skip, err = fileutils.Matches(relPath, options.Excludes)
+			if err != nil {
+				log.Debugf("Error matching %s", relPath, err)
+				return err
+			}
+			if len(patterns) > 0 {
+				keep, err = fileutils.RecursiveMatches(relPath, patterns)
+				if err != nil {
+					log.Debugf("Error recursive matching %s", relPath, err)
+					return err
+				}
+			}
+			if skip || !keep {
+				if f.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 
 		parent := root.LookUp(filepath.Dir(relPath))
@@ -317,7 +354,7 @@ func collectFileInfo(sourceDir string) (*FileInfo, error) {
 
 // ChangesDirs compares two directories and generates an array of Change objects describing the changes.
 // If oldDir is "", then all files in newDir will be Add-Changes.
-func ChangesDirs(newDir, oldDir string) ([]Change, error) {
+func ChangesDirs(newDir, oldDir string, options *ChangeOptions) ([]Change, error) {
 	var (
 		oldRoot, newRoot *FileInfo
 		err1, err2       error
@@ -325,12 +362,12 @@ func ChangesDirs(newDir, oldDir string) ([]Change, error) {
 	)
 	go func() {
 		if oldDir != "" {
-			oldRoot, err1 = collectFileInfo(oldDir)
+			oldRoot, err1 = collectFileInfo(oldDir, options)
 		}
 		errs <- err1
 	}()
 	go func() {
-		newRoot, err2 = collectFileInfo(newDir)
+		newRoot, err2 = collectFileInfo(newDir, options)
 		errs <- err2
 	}()
 	for i := 0; i < 2; i++ {

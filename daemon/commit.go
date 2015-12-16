@@ -3,6 +3,7 @@ package daemon
 import (
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/image"
+	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/runconfig"
 )
 
@@ -20,6 +21,7 @@ func (daemon *Daemon) ContainerCommit(job *engine.Job) engine.Status {
 	var (
 		config    = container.Config
 		newConfig runconfig.Config
+		options   archive.ChangeOptions
 	)
 
 	if err := job.GetenvJson("config", &newConfig); err != nil {
@@ -30,7 +32,11 @@ func (daemon *Daemon) ContainerCommit(job *engine.Job) engine.Status {
 		return job.Error(err)
 	}
 
-	img, err := daemon.Commit(container, job.Getenv("repo"), job.Getenv("tag"), job.Getenv("comment"), job.Getenv("author"), job.GetenvBool("pause"), &newConfig)
+	if err := job.GetenvJson("changeOptions", &options); err != nil {
+		return job.Error(err)
+	}
+
+	img, err := daemon.Commit(container, job.Getenv("repo"), job.Getenv("tag"), job.Getenv("comment"), job.Getenv("author"), job.GetenvBool("pause"), &options, &newConfig)
 	if err != nil {
 		return job.Error(err)
 	}
@@ -40,7 +46,7 @@ func (daemon *Daemon) ContainerCommit(job *engine.Job) engine.Status {
 
 // Commit creates a new filesystem image from the current state of a container.
 // The image can optionally be tagged into a repository
-func (daemon *Daemon) Commit(container *Container, repository, tag, comment, author string, pause bool, config *runconfig.Config) (*image.Image, error) {
+func (daemon *Daemon) Commit(container *Container, repository, tag, comment, author string, pause bool, options *archive.ChangeOptions, config *runconfig.Config) (*image.Image, error) {
 	if pause {
 		container.Pause()
 		defer container.Unpause()
@@ -51,7 +57,7 @@ func (daemon *Daemon) Commit(container *Container, repository, tag, comment, aut
 	}
 	defer container.Unmount()
 
-	rwTar, err := container.ExportRw()
+	rwTar, err := container.ExportRw(options)
 	if err != nil {
 		return nil, err
 	}

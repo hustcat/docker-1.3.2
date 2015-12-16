@@ -146,7 +146,7 @@ func (img *Image) TarLayer() (arch archive.Archive, err error) {
 
 	driver := img.graph.Driver()
 
-	return driver.Diff(img.ID, img.Parent)
+	return driver.Diff(img.ID, img.Parent, nil)
 }
 
 // Image includes convenience proxy functions to its graph

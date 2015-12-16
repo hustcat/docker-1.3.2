@@ -26,6 +26,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/engine"
+	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/listenbuffer"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -452,18 +453,22 @@ func postCommit(eng *engine.Engine, version version.Version, w http.ResponseWrit
 		return err
 	}
 	var (
-		config       engine.Env
 		env          engine.Env
+		data         engine.Env
 		job          = eng.Job("commit", r.Form.Get("container"))
 		stdoutBuffer = bytes.NewBuffer(nil)
+		options      archive.ChangeOptions
 	)
 
 	if err := checkForJson(r); err != nil {
 		return err
 	}
 
-	if err := config.Decode(r.Body); err != nil {
+	if err := data.Decode(r.Body); err != nil {
 		log.Errorf("%s", err)
+	}
+	if err := data.GetJson("changeOptions", &options); err != nil {
+		return err
 	}
 
 	if r.FormValue("pause") == "" && version.GreaterThanOrEqualTo("1.13") {
@@ -476,7 +481,8 @@ func postCommit(eng *engine.Engine, version version.Version, w http.ResponseWrit
 	job.Setenv("tag", r.Form.Get("tag"))
 	job.Setenv("author", r.Form.Get("author"))
 	job.Setenv("comment", r.Form.Get("comment"))
-	job.SetenvSubEnv("config", &config)
+	job.SetenvJson("changeOptions", &options)
+	//	job.SetenvSubEnv("config", nil)
 
 	job.Stdout.Add(stdoutBuffer)
 	if err := job.Run(); err != nil {

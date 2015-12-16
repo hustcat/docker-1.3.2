@@ -45,7 +45,7 @@ func (s *TagStore) CmdDiffAndApply(job *engine.Job) engine.Status {
 	}
 
 	job.Stdout.Write(sf.FormatProgress(utils.TruncateID(img.ID), fmt.Sprintf("Diff two mirrors(%s - %s)", img.ID, parentImageID), nil))
-	fs, err := s.graph.Driver().Diff(img.ID, parentImageID)
+	fs, err := s.graph.Driver().Diff(img.ID, parentImageID, nil)
 	if err != nil {
 		return job.Error(err)
 	}
