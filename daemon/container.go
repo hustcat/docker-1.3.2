@@ -1394,6 +1394,9 @@ func (container *Container) waitForStart() error {
 		}
 	} else {
 		monitor := NewMonitorProxy(container, true)
+		if monitor == nil {
+			return fmt.Errorf("Create monitor proxy failed")
+		}
 		container.exMonitor = monitor
 		select {
 		case <-container.exMonitor.startSignal:

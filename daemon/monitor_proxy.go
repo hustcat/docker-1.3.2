@@ -5,9 +5,9 @@ import (
 	"fmt"
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/engine"
-	"github.com/docker/docker/pkg/reexec"
 	"github.com/docker/docker/pkg/watch"
 	watchjson "github.com/docker/docker/pkg/watch/json"
+	"github.com/docker/docker/utils"
 	"github.com/docker/libcontainer/syncpipe"
 	"io/ioutil"
 	"net"
@@ -15,6 +15,7 @@ import (
 	"net/http/httputil"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"sync"
 	"syscall"
@@ -77,20 +78,35 @@ type MonitorProxy struct {
 
 	// hasCmd whether has exec.Cmd
 	hasCmd bool
+
+	// monitorPath monitor binary path
+	monitorPath string
 }
 
 // NewMonitorProxy return proxy for extern monitor
 func NewMonitorProxy(c *Container, createCmd bool) *MonitorProxy {
 	if createCmd {
+		root := c.daemon.config.Root
 		args := []string{
-			"docker-monitor",
+			"monitor",
 			"-id", c.ID,
-			"-root", c.daemon.config.Root,
+			"-root", root,
 		}
+
+		monitorPath := path.Join(root, "monitor", fmt.Sprintf("dockermonitor-%s", c.ID))
+		if _, err := utils.CopyFile(c.daemon.sysInitPath, monitorPath); err != nil {
+			log.Errorf("Copy monitor file error: %v", err)
+			return nil
+		}
+		if err := os.Chmod(monitorPath, 700); err != nil {
+			log.Errorf("Chmod monitor file error: %v", err)
+			return nil
+		}
+
 		return &MonitorProxy{
 			monitorCommand: monitorCommand{
 				cmd: &exec.Cmd{
-					Path:   reexec.Self(),
+					Path:   monitorPath,
 					Args:   args,
 					Stdout: os.Stdout,
 					Stderr: os.Stderr,
@@ -100,6 +116,7 @@ func NewMonitorProxy(c *Container, createCmd bool) *MonitorProxy {
 			container:   c,
 			startSignal: make(chan struct{}),
 			hasCmd:      true,
+			monitorPath: monitorPath,
 		}
 	} else {
 		return &MonitorProxy{

@@ -121,5 +121,11 @@ func (daemon *Daemon) Destroy(container *Container) error {
 
 	selinuxFreeLxcContexts(container.ProcessLabel)
 
+	if container.Config.MonitorDriver == MonitorExternal {
+		monitorPath := path.Join(daemon.config.Root, "monitor", fmt.Sprintf("dockermonitor-%s", container.ID))
+		if err := os.Remove(monitorPath); err != nil {
+			log.Errorf("Remove monitor file %s error: %v", monitorPath, err)
+		}
+	}
 	return nil
 }

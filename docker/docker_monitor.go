@@ -13,7 +13,7 @@ import (
 	"os"
 )
 
-const dockerMonitor = "docker-monitor"
+const dockerMonitor = "monitor"
 
 var (
 	monitorCfg = &daemon.MonitorConfig{}

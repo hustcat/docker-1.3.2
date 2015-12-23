@@ -982,6 +982,12 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		sysInitPath = localCopy
 	}
 
+	// monitor directory is used save monitor binary
+	monitorDir := path.Join(config.Root, "monitor")
+	if err := os.MkdirAll(monitorDir, 0700); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
+
 	sysInfo := sysinfo.New(false)
 	ed, err := execdrivers.NewDriver(config.ExecDriver, config.Root, sysInitPath, sysInfo)
 	if err != nil {
