@@ -40,6 +40,9 @@ type ProtoDriver interface {
 	// Put releases the system resources for the specified id,
 	// e.g, unmounting layered filesystem.
 	Put(id string)
+	// Register register the system resources.ONLY for external container
+	// when docker daemon restart
+	Register(id string) error
 	// Exists returns whether a filesystem layer with the specified
 	// ID exists on this driver.
 	Exists(id string) bool

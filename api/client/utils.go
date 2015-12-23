@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	gosignal "os/signal"
@@ -18,10 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/engine"
-	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/docker/pkg/term"
 	"github.com/docker/docker/registry"
@@ -115,6 +116,61 @@ func (cli *DockerCli) call(method, path string, data interface{}, passAuthInfo b
 		}
 		return nil, -1, err
 	}
+
+	if resp.StatusCode == http.StatusMovedPermanently {
+		loc := resp.Header.Get("Location")
+		protoAddrParts := strings.SplitN(loc, "://", 2)
+		log.Debugf("redirect to %s", loc)
+		dial, err := net.Dial(protoAddrParts[0], protoAddrParts[1])
+		if err != nil {
+			return nil, -1, err
+		}
+		clientconn := httputil.NewClientConn(dial, nil)
+		defer clientconn.Close()
+		resp, err = clientconn.Do(req)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, -1, err
+		}
+		if len(body) == 0 {
+			return nil, resp.StatusCode, fmt.Errorf("Error: request returned %s for API route and version %s, check if the server supports the requested API version", http.StatusText(resp.StatusCode), req.URL)
+		}
+		return nil, resp.StatusCode, fmt.Errorf("Error response from daemon: %s", bytes.TrimSpace(body))
+	}
+
+	return resp.Body, resp.StatusCode, nil
+}
+
+func (cli *DockerCli) callURL(method, URL, path string, data interface{}) (io.ReadCloser, int, error) {
+	params, err := cli.encodeData(data)
+	if err != nil {
+		return nil, -1, err
+	}
+	req, err := http.NewRequest(method, fmt.Sprintf("/v%s%s", api.APIVERSION, path), params)
+	if err != nil {
+		return nil, -1, err
+	}
+
+	req.Header.Set("User-Agent", "Docker-Client/"+dockerversion.VERSION)
+	//req.URL.Host = cli.addr
+	//req.URL.Scheme = cli.scheme
+	if data != nil {
+		req.Header.Set("Content-Type", "application/json")
+	} else if method == "POST" {
+		req.Header.Set("Content-Type", "plain/text")
+	}
+
+	protoAddrParts := strings.SplitN(URL, "://", 2)
+	dial, err := net.Dial(protoAddrParts[0], protoAddrParts[1])
+	if err != nil {
+		return nil, -1, err
+	}
+	clientconn := httputil.NewClientConn(dial, nil)
+	defer clientconn.Close()
+	resp, err := clientconn.Do(req)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		body, err := ioutil.ReadAll(resp.Body)
