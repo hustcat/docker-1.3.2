@@ -41,10 +41,13 @@ type driver struct {
 	root             string
 	initPath         string
 	activeContainers map[string]*activeContainer
+
+	//driverType builtin or external
+	driverType string
 	sync.Mutex
 }
 
-func NewDriver(root, initPath string) (*driver, error) {
+func NewDriver(root, initPath, driverType string) (*driver, error) {
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, err
 	}
@@ -58,6 +61,7 @@ func NewDriver(root, initPath string) (*driver, error) {
 		root:             root,
 		initPath:         initPath,
 		activeContainers: make(map[string]*activeContainer),
+		driverType:       driverType,
 	}, nil
 }
 

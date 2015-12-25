@@ -20,6 +20,11 @@ var (
 	ErrDriverNotFound          = errors.New("The requested docker init has not been found")
 )
 
+const (
+	NativeBuiltin  = "builtin"
+	NativeExternal = "external"
+)
+
 type StartCallback func(*ProcessConfig, int)
 
 // Driver specific information based on
