@@ -9,7 +9,6 @@ import (
 	"github.com/docker/docker/pkg/broadcastwriter"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/promise"
-	"github.com/docker/docker/pkg/sysinfo"
 	"github.com/docker/docker/utils"
 	"io"
 	"io/ioutil"
@@ -307,11 +306,11 @@ func (m *externalMonitor) resetContainer() {
 
 func newExecDriver() (execdriver.Driver, error) {
 	sysInitPath := path.Join(dockerRoot, "init", fmt.Sprintf("dockerinit-%s", dockerversion.VERSION))
-	sysInfo := sysinfo.New(false)
+	//sysInfo := sysinfo.New(false)
 
 	// only native driver
 	//ed, err := execdrivers.NewDriver(c.ExecDriver, dockerRoot, sysInitPath, sysInfo)
-	ed, err := execdrivers.NewDriver("native", dockerRoot, sysInitPath, sysInfo)
+	ed, err := execdrivers.NewDriver("native", dockerRoot, sysInitPath, execdriver.NativeExternal, nil)
 	if err != nil {
 		return nil, err
 	}

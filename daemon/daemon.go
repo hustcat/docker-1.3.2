@@ -989,7 +989,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	}
 
 	sysInfo := sysinfo.New(false)
-	ed, err := execdrivers.NewDriver(config.ExecDriver, config.Root, sysInitPath, sysInfo)
+	ed, err := execdrivers.NewDriver(config.ExecDriver, config.Root, sysInitPath, execdriver.NativeBuiltin, sysInfo)
 	if err != nil {
 		return nil, err
 	}

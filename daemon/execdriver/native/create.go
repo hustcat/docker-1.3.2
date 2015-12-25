@@ -105,20 +105,33 @@ func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Com
 	}
 
 	if c.Network.ContainerID != "" {
-		d.Lock()
-		active := d.activeContainers[c.Network.ContainerID]
-		d.Unlock()
+		if d.driverType == execdriver.NativeBuiltin {
+			d.Lock()
+			active := d.activeContainers[c.Network.ContainerID]
+			d.Unlock()
 
-		if active == nil || active.cmd.Process == nil {
-			return fmt.Errorf("%s is not a valid running container to join", c.Network.ContainerID)
+			if active == nil || active.cmd.Process == nil {
+				return fmt.Errorf("%s is not a valid running container to join", c.Network.ContainerID)
+			}
+			cmd := active.cmd
+
+			nspath := filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "ns", "net")
+			container.Networks = append(container.Networks, &libcontainer.Network{
+				Type:   "netns",
+				NsPath: nspath,
+			})
+		} else { // external container
+			state, err := libcontainer.GetState(filepath.Join(d.root, c.Network.ContainerID))
+			if err != nil {
+				return fmt.Errorf("Read container state error: %v", err)
+			}
+			nspath := filepath.Join("/proc", fmt.Sprint(state.InitPid), "ns", "net")
+			container.Networks = append(container.Networks, &libcontainer.Network{
+				Type:   "netns",
+				NsPath: nspath,
+			})
 		}
-		cmd := active.cmd
 
-		nspath := filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "ns", "net")
-		container.Networks = append(container.Networks, &libcontainer.Network{
-			Type:   "netns",
-			NsPath: nspath,
-		})
 	}
 
 	return nil
