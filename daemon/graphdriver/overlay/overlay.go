@@ -112,9 +112,14 @@ func init() {
 // If overlay filesystem is not supported on the host, graphdriver.ErrNotSupported is returned as error.
 // If a overlay filesystem is not supported over a existing filesystem then error graphdriver.ErrIncompatibleFS is returned.
 func Init(home string, options []string) (graphdriver.Driver, error) {
+	logrus.Debug("overlayfs driver init ...")
 
 	if err := supportsOverlay(); err != nil {
 		return nil, graphdriver.ErrNotSupported
+	}
+
+	if err := os.MkdirAll(home, 0755); err != nil {
+		return nil, err
 	}
 
 	fsMagic, err := graphdriver.GetFSMagic(home)
