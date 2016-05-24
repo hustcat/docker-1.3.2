@@ -13,6 +13,8 @@ import (
 type FsMagic uint64
 
 const (
+    // FsMagicUnsupported is a predifined contant value other than a valid filesystem id.
+    FsMagicUnsupported = FsMagic(0x00000000)
 	FsMagicBtrfs = FsMagic(0x9123683E)
 	FsMagicAufs  = FsMagic(0x61756673)
 )
@@ -53,8 +55,8 @@ type ProtoDriver interface {
 	// held by the driver, e.g., unmounting all layered filesystems
 	// known to this driver.
 	Cleanup() error
-	// MountPath returns a string mount path of this driver.
-	MountPath() string
+	// MountPath returns mount path of this container.
+	MountPath(id string) string
 }
 
 // Driver is the interface for layered/snapshot file system drivers.
@@ -83,9 +85,8 @@ var (
 	drivers map[string]InitFunc
 	// Slice of drivers that should be used in an order
 	priority = []string{
-		"aufs",
-		"btrfs",
 		"devicemapper",
+		"overlay",
 		"vfs",
 	}
 

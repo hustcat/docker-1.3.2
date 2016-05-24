@@ -150,8 +150,8 @@ func (d *Driver) Exists(id string) bool {
 	return d.DeviceSet.HasDevice(id)
 }
 
-func (d *Driver) MountPath() string {
-	return path.Join(d.home, "mnt")
+func (d *Driver) MountPath(id string) string {
+	return path.Join(d.home, "mnt", "rootfs")
 }
 
 func (d *Driver) Register(id string) error {

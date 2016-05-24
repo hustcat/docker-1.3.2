@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"path"
 	"strings"
 	"time"
 
@@ -35,7 +34,7 @@ func (s *TagStore) CmdDiffAndApply(job *engine.Job) engine.Status {
 		return job.Error(err)
 	}
 
-	dest := path.Join(s.graph.Driver().MountPath(), containerID, "rootfs")
+	dest := s.graph.Driver().MountPath(containerID)
 	fi, err := os.Stat(dest)
 	if err != nil && !os.IsExist(err) {
 		return job.Error(err)
@@ -328,7 +327,7 @@ func (s *TagStore) pullAndMergeImage(r *registry.Session, out io.Writer, contain
 				}
 			}
 			// add layer to container
-			dest := path.Join(s.graph.Driver().MountPath(), containerID, "rootfs")
+			dest := s.graph.Driver().MountPath(containerID)
 			out.Write(sf.FormatProgress(utils.TruncateID(id), fmt.Sprintf("Merge layer to container rootfs %s", dest), nil))
 			err = archive.ApplyLayer(dest, layer)
 			if err != nil && j == retries {

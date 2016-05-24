@@ -63,7 +63,12 @@ void get_args(int *argc, char ***argv)
 #ifdef SYS_setns
 int setns(int fd, int nstype)
 {
-	return syscall(SYS_setns, fd, nstype);
+	return syscall(__SYS_setns, fd, nstype);
+}
+#elif __NR_setns
+int setns(int fd, int nstype)
+{
+	return syscall(__NR_setns, fd, nstype);
 }
 #endif
 #endif

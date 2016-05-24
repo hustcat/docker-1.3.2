@@ -90,6 +90,7 @@ if [ ! "$GOPATH" ]; then
 	exit 1
 fi
 
+DOCKER_BUILDTAGS+="exclude_graphdriver_btrfs exclude_graphdriver_aufs" #add by dbyin
 if [ -z "$DOCKER_CLIENTONLY" ]; then
 	DOCKER_BUILDTAGS+=" daemon"
 fi
