@@ -11,8 +11,9 @@ import (
 	"path"
 	"sync"
 	"syscall"
+	"time"
 
-	"github.com/Sirupsen/logrus"
+	log "github.com/Sirupsen/logrus"
 
 	"github.com/docker/docker/daemon/graphdriver"
 	"github.com/docker/docker/pkg/archive"
@@ -112,12 +113,13 @@ func init() {
 // If overlay filesystem is not supported on the host, graphdriver.ErrNotSupported is returned as error.
 // If a overlay filesystem is not supported over a existing filesystem then error graphdriver.ErrIncompatibleFS is returned.
 func Init(home string, options []string) (graphdriver.Driver, error) {
-	logrus.Debug("overlayfs driver init ...")
+	log.Debug("overlayfs driver init ...")
 
 	if err := supportsOverlay(); err != nil {
 		return nil, graphdriver.ErrNotSupported
 	}
 
+	// Create home dir
 	if err := os.MkdirAll(home, 0755); err != nil {
 		return nil, err
 	}
@@ -133,19 +135,14 @@ func Init(home string, options []string) (graphdriver.Driver, error) {
 	// check if they are running over btrfs or aufs
 	switch fsMagic {
 	case graphdriver.FsMagicBtrfs:
-		logrus.Error("'overlay' is not supported over btrfs.")
+		log.Error("'overlay' is not supported over btrfs.")
 		return nil, graphdriver.ErrIncompatibleFS
 	case graphdriver.FsMagicAufs:
-		logrus.Error("'overlay' is not supported over aufs.")
+		log.Error("'overlay' is not supported over aufs.")
 		return nil, graphdriver.ErrIncompatibleFS
 	case graphdriver.FsMagicZfs:
-		logrus.Error("'overlay' is not supported over zfs.")
+		log.Error("'overlay' is not supported over zfs.")
 		return nil, graphdriver.ErrIncompatibleFS
-	}
-
-	// Create the driver home dir
-	if err := graphdriver.MakePrivate(home); err != nil && !os.IsExist(err) {
-		return nil, err
 	}
 
 	d := &Driver{
@@ -173,7 +170,7 @@ func supportsOverlay() error {
 			return nil
 		}
 	}
-	logrus.Error("'overlay' not found as a supported filesystem on this host. Please ensure kernel is new enough and has overlay support loaded.")
+	log.Error("'overlay' not found as a supported filesystem on this host. Please ensure kernel is new enough and has overlay support loaded.")
 	return graphdriver.ErrNotSupported
 }
 
@@ -375,13 +372,13 @@ func (d *Driver) Put(id string) {
 
 	mount := d.active[id]
 	if mount == nil {
-		logrus.Debugf("Put on a non-mounted device %s", id)
+		log.Debugf("Put on a non-mounted device %s", id)
 		// but it might be still here
 		if d.Exists(id) {
 			mergedDir := path.Join(d.dir(id), "merged")
 			err := syscall.Unmount(mergedDir, 0)
 			if err != nil {
-				logrus.Errorf("Failed to unmount %s overlay: %v", id, err)
+				log.Errorf("Failed to unmount %s overlay: %v", id, err)
 			}
 		}
 		return
@@ -396,7 +393,7 @@ func (d *Driver) Put(id string) {
 	if mount.mounted {
 		err := syscall.Unmount(mount.path, 0)
 		if err != nil {
-			logrus.Errorf("Failed to unmount %s overlay: %v", id, err)
+			log.Errorf("Failed to unmount %s overlay: %v", id, err)
 		}
 	}
 }
@@ -440,15 +437,12 @@ func (d *Driver) ApplyDiff(id string, parent string, diff archive.ArchiveReader)
 		return 0, err
 	}
 
+	start := time.Now().UTC()
+	log.Debugf("Start untar layer")
 	if err = chrootarchive.ApplyLayer(tmpRootDir, diff); err != nil {
 		return 0, err
 	}
-
-	/*  see begin at this function
-	if parent == "" {
-		return utils.TreeSize(rootDir)
-	}
-	*/
+	log.Debugf("Untar time: %vs", time.Now().UTC().Sub(start).Seconds())
 
 	changes, err := archive.ChangesDirs(tmpRootDir, parentRootDir, nil)
 	if err != nil {
